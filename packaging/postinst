@@ -1,0 +1,10 @@
+#!/bin/sh
+set -eu
+[ -n "${IPKG_INSTROOT:-}" ] && exit 0
+# Install is idle: the shipped UCI configuration has no selected devices and
+# enabled=0. Never change any upstream, firewall, nlbwmon or NAT66 configuration.
+/etc/init.d/netpreference enable
+/etc/init.d/netpreference restart
+/etc/init.d/rpcd reload
+rm -f /tmp/luci-indexcache
+exit 0

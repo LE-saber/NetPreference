@@ -1,0 +1,8 @@
+{
+ "admin/services/netpreference": {
+  "title": "NetPreference",
+  "order": 65,
+  "action": {"type": "view", "path": "netpreference/overview"},
+  "depends": {"acl": ["luci-app-netpreference"], "uci": {"netpreference": true}}
+ }
+}

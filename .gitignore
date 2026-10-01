@@ -1,0 +1,5 @@
+dist/
+*.ipk
+*.test
+__pycache__/
+.bootstrap/
