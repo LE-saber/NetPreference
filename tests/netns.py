@@ -20,7 +20,12 @@ BINARY=ROOT/'dist/netpreference'
 
 
 def run(*args,**kw):
-    return subprocess.run([str(x) for x in args],check=True,text=True,stdout=subprocess.PIPE,stderr=subprocess.PIPE,**kw).stdout
+    result = subprocess.run([str(x) for x in args], check=False, text=True,
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, **kw)
+    if result.returncode:
+        raise RuntimeError(f"command {result.args!r} exited {result.returncode}\n"
+                           f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}")
+    return result.stdout
 
 
 def wait_for(fn,timeout=12):
@@ -121,7 +126,14 @@ config rule 'custom'
         ns(router,'ip','addr','add','198.51.100.1/24','dev','wan0');ns(wan,'ip','addr','add','198.51.100.2/24','dev','w0')
         ns(router,'ip','-6','addr','add','2001:db8:2::1/64','dev','wan0','nodad');ns(wan,'ip','-6','addr','add','2001:db8:2::2/64','dev','w0','nodad')
         ns(wan,'ip','route','add','192.0.2.0/24','via','198.51.100.1');ns(router,'sysctl','-qw','net.ipv4.ip_forward=1','net.ipv6.conf.all.forwarding=1')
-        sentinel='table inet fw4 { comment "existing firewall/NAT66 sentinel"; chain srcnat { type nat hook postrouting priority 100; policy accept; oifname "wan0" meta nfproto ipv6 masquerade; } }'
+        sentinel="""table inet fw4 {
+ comment "existing firewall/NAT66 sentinel"
+ chain srcnat {
+  type nat hook postrouting priority 100; policy accept;
+  oifname "wan0" meta nfproto ipv6 masquerade
+ }
+}
+"""
         ns(router,'nft','-f','-',input=sentinel);before=ns(router,'nft','-j','list','table','inet','fw4')
         start(router,sys.executable,FIXTURE,'serve');start(wan,sys.executable,FIXTURE,'echo')
         daemon=start(router,BINARY,'serve');guard=start(router,BINARY,'guard')
