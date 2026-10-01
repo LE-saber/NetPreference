@@ -73,7 +73,7 @@ func BuildNFT(c *Config, hosts []Host, replace bool) string {
 		b.WriteString("delete table inet netpreference\n")
 	}
 	fmt.Fprintf(&b, "table inet netpreference {\n comment %q\n", OwnerComment)
-	nftSet(&b, "devices", "ether_addr", selected(c), true)
+	nftSet(&b, "np_devices", "ether_addr", selected(c), true)
 	nftSet(&b, "clients4", "ether_addr . ipv4_addr", identityPairs(c, hosts, false), false)
 	nftSet(&b, "clients6", "ether_addr . ipv6_addr", identityPairs(c, hosts, true), false)
 	if c.Monitor {
@@ -88,7 +88,7 @@ func BuildNFT(c *Config, hosts []Host, replace bool) string {
 			}
 		}
 	}
-	fmt.Fprintf(&b, " chain dns_redirect { type nat hook prerouting priority -105; policy accept;\n iifname { %s } ether saddr @devices ether saddr . ip saddr @clients4 meta l4proto { tcp, udp } th dport 53 redirect to :1053\n iifname { %s } ether saddr @devices ether saddr . ip6 saddr @clients6 meta l4proto { tcp, udp } th dport 53 redirect to :1053\n }\n", quoteList(c.Interfaces), quoteList(c.Interfaces))
+	fmt.Fprintf(&b, " chain dns_redirect { type nat hook prerouting priority -105; policy accept;\n iifname { %s } ether saddr @np_devices ether saddr . ip saddr @clients4 meta l4proto { tcp, udp } th dport 53 redirect to :1053\n iifname { %s } ether saddr @np_devices ether saddr . ip6 saddr @clients6 meta l4proto { tcp, udp } th dport 53 redirect to :1053\n }\n", quoteList(c.Interfaces), quoteList(c.Interfaces))
 	trusted := append([]string{"lo"}, c.Interfaces...)
 	fmt.Fprintf(&b, " chain listener_guard { type filter hook input priority -5; policy accept;\n iifname != { %s } meta l4proto { tcp, udp } th dport 1053 drop\n }\n", quoteList(trusted))
 	if c.Monitor {
@@ -107,10 +107,10 @@ func BuildNFT(c *Config, hosts []Host, replace bool) string {
 }
 func RefreshNFT(c *Config, hosts []Host, healthy bool) string {
 	var b strings.Builder
-	b.WriteString("flush set inet netpreference devices\n")
+	b.WriteString("flush set inet netpreference np_devices\n")
 	if healthy {
 		if macs := selected(c); len(macs) > 0 {
-			fmt.Fprintf(&b, "add element inet netpreference devices { %s }\n", strings.Join(macs, ", "))
+			fmt.Fprintf(&b, "add element inet netpreference np_devices { %s }\n", strings.Join(macs, ", "))
 		}
 	}
 	for _, fam := range []struct {

@@ -111,6 +111,8 @@ config rule 'custom'
         for name in names:run('ip','netns','add',name);created.append(name);ns(name,'ip','link','set','lo','up')
         ns(router,'ip','link','add','br-lan','type','bridge');ns(router,'ip','link','set','br-lan','up')
         ns(router,'ip','addr','add','192.0.2.1/24','dev','br-lan');ns(router,'ip','-6','addr','add','fd42:1::1/64','dev','br-lan','nodad')
+        ns(router,'ip','addr','add','192.0.2.254/24','dev','br-lan')
+        ns(router,'ip','-6','addr','add','fe80::1/64','dev','br-lan','nodad')
         for index,name in enumerate((first,second),1):
             ns(router,'ip','link','add',f'lan{index}','type','veth','peer','name',f'c{index}')
             ns(router,'ip','link','set',f'c{index}','netns',name)
@@ -118,6 +120,8 @@ config rule 'custom'
             ns(name,'ip','link','set',f'c{index}','name','eth0');mac=f'02:00:00:00:00:0{index}'
             ns(name,'ip','link','set','eth0','address',mac);ns(name,'ip','link','set','eth0','up')
             ns(name,'ip','addr','add',f'192.0.2.{index+1}/24','dev','eth0');ns(name,'ip','-6','addr','add',f'fd42:1::{index+1}/64','dev','eth0','nodad')
+            ns(name,'ip','-6','addr','add',f'fe80::{index+1}/64','dev','eth0','nodad')
+            ns(router,'ip','-6','neigh','replace',f'fe80::{index+1}','lladdr',mac,'nud','permanent','dev','br-lan')
             ns(name,'ip','route','add','default','via','192.0.2.1');ns(name,'ip','-6','route','add','default','via','fd42:1::1')
             ns(router,'ip','neigh','replace',f'192.0.2.{index+1}','lladdr',mac,'nud','permanent','dev','br-lan')
             ns(router,'ip','-6','neigh','replace',f'fd42:1::{index+1}','lladdr',mac,'nud','permanent','dev','br-lan')
@@ -145,6 +149,13 @@ config rule 'custom'
                 expect(first,host,1,'rewrite.test','203.0.113.77',proto=proto)
                 expect(first,host,28,'rewrite.test','2001:db8::77',proto=proto)
                 expect(second,host,1,'rewrite.test','198.51.100.7',proto=proto)
+        # Explicitly exercise aliases and IPv6 link-local RDNSS destinations.
+        # Baseline fixture binds wildcard without packet-info, so alias tests
+        # below intentionally target only the packet-info-correct policy proxy.
+        for host in ('192.0.2.254', 'fe80::1%eth0'):
+            for proto in ('udp', 'tcp'):
+                expect(first,host,1,'rewrite.test','203.0.113.77',proto=proto)
+                expect(first,host,28,'rewrite.test','2001:db8::77',proto=proto)
         expect(first,'192.0.2.1',1,'x.blocked.test',rcode=3)
         expect(second,'192.0.2.1',1,'x.blocked.test','198.51.100.7')
         r=expect(first,'192.0.2.1',1,'preference.test','198.51.100.7');assert r['elapsed']>=0.07,r

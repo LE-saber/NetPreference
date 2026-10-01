@@ -6,6 +6,7 @@ import (
 	"io"
 	"net"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -29,6 +30,10 @@ func ListenDNS(addr string, e *Engine, identify func(net.IP) string) (*DNSServic
 	}
 	u, err := net.ListenUDP("udp", udpaddr)
 	if err != nil {
+		return nil, err
+	}
+	if err = enablePacketInfo(u); err != nil {
+		u.Close()
 		return nil, err
 	}
 	// Port 0 is used by integration tests; TCP must bind the chosen UDP port.
@@ -72,10 +77,18 @@ func (s *DNSService) release(ip string) {
 func (s *DNSService) udpLoop() {
 	defer s.wg.Done()
 	buf := make([]byte, 65535)
+	oob := make([]byte, 128)
 	for {
-		n, addr, err := s.udp.ReadFromUDP(buf)
+		n, oobn, flags, addr, err := s.udp.ReadMsgUDP(buf, oob)
 		if err != nil {
 			return
+		}
+		if flags&(syscall.MSG_CTRUNC|syscall.MSG_TRUNC) != 0 {
+			continue
+		}
+		replyInfo := packetInfoReply(oob[:oobn], addr.IP)
+		if replyInfo == nil {
+			continue
 		}
 		raw := append([]byte(nil), buf[:n]...)
 		if !s.acquire(addr.IP.String()) {
@@ -92,7 +105,7 @@ func (s *DNSService) udpLoop() {
 			if err == nil && len(ans) > q.UDPLimit {
 				ans = TruncateReply(q, ans)
 			}
-			_, _ = s.udp.WriteToUDP(ans, addr)
+			_, _, _ = s.udp.WriteMsgUDP(ans, replyInfo, addr)
 		}()
 	}
 }

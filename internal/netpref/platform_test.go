@@ -222,7 +222,7 @@ func TestTickHealthInterfaceAndRecovery(t *testing.T) {
 	}
 	found := false
 	for _, c := range f.calls {
-		if strings.HasPrefix(c.input, "flush set inet netpreference devices\n") && !strings.Contains(c.input, "add element inet netpreference devices") {
+		if strings.HasPrefix(c.input, "flush set inet netpreference np_devices\n") && !strings.Contains(c.input, "add element inet netpreference np_devices") {
 			found = true
 		}
 	}
@@ -262,7 +262,7 @@ func TestNFTIdentityAndMonitorSwitch(t *testing.T) {
 		t.Fatal("monitor counters missing")
 	}
 	s = RefreshNFT(&c, hosts, false)
-	if strings.Contains(s, "add element inet netpreference devices") {
+	if strings.Contains(s, "add element inet netpreference np_devices") {
 		t.Fatal("unhealthy activation")
 	}
 }
