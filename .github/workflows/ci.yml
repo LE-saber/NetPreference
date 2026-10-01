@@ -1,0 +1,101 @@
+name: NetPreference MVP
+on:
+  push:
+    branches: [feat/mvp]
+    paths: ['.bootstrap/READY', 'cmd/**', 'internal/**', 'tests/**', 'scripts/**', 'files/**', 'packaging/**', 'openwrt/**', 'go.mod', '.github/workflows/**']
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: netpreference-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 0
+      - name: Materialize checked source transport
+        if: github.event_name == 'push' && hashFiles('.bootstrap/READY') != ''
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import base64, hashlib, io, lzma, pathlib, tarfile
+          root=pathlib.Path('.')
+          encoded=''.join(p.read_text().strip() for p in sorted(root.glob('.bootstrap/part-*.b64')))
+          data=base64.b64decode(encoded,validate=True)
+          expected=(root/'.bootstrap/READY').read_text().strip()
+          assert hashlib.sha256(data).hexdigest()==expected, 'source transport checksum mismatch'
+          with tarfile.open(fileobj=io.BytesIO(lzma.decompress(data)),mode='r:') as archive:
+              for member in archive.getmembers():
+                  path=pathlib.PurePosixPath(member.name)
+                  assert member.isfile() and not path.is_absolute() and '..' not in path.parts
+                  assert path.parts[0] not in ('.git','.github','.bootstrap','dist')
+                  assert not member.name.startswith('docs/failures/')
+              archive.extractall('.',filter='data')
+          PY
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git rm -r .bootstrap
+          git add README.md LICENSE .gitignore go.mod cmd internal files packaging scripts tests openwrt docs
+          git commit -m 'feat: materialize tested NetPreference 0.1.0 MVP source'
+          git push origin HEAD:feat/mvp
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
+        if: hashFiles('go.mod') != ''
+        with:
+          go-version: stable
+          cache: false
+      - name: Unit, wire behavior, fuzz, package and static checks
+        id: core
+        if: hashFiles('go.mod') != ''
+        shell: bash
+        run: |
+          set -o pipefail
+          mkdir -p dist/logs
+          bash scripts/check.sh 2>&1 | tee dist/logs/core.txt
+      - name: Install isolated kernel-lab dependencies
+        if: hashFiles('go.mod') != ''
+        run: sudo apt-get update && sudo apt-get install -y nftables conntrack iproute2
+      - name: Real dual-stack nftables and crash recovery
+        id: kernel
+        if: hashFiles('go.mod') != ''
+        shell: bash
+        run: |
+          set -o pipefail
+          sudo python3 tests/netns.py 2>&1 | tee dist/logs/kernel.txt
+      - name: Target userspace opkg install and remove
+        id: rootfs
+        if: hashFiles('go.mod') != ''
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -o pipefail
+          sudo bash tests/rootfs_install.sh 2>&1 | tee dist/logs/rootfs.txt
+      - name: Commit each failed phase separately
+        if: always() && github.event_name == 'push' && hashFiles('scripts/ci_failure.py') != ''
+        shell: bash
+        env:
+          CORE_RESULT: ${{ steps.core.outcome }}
+          KERNEL_RESULT: ${{ steps.kernel.outcome }}
+          ROOTFS_RESULT: ${{ steps.rootfs.outcome }}
+        run: |
+          for phase in core kernel rootfs; do
+            var="${phase^^}_RESULT"
+            if [ "${!var}" = failure ]; then python3 scripts/ci_failure.py "$phase"; fi
+          done
+      - name: Upload package and exact verification logs
+        if: always() && hashFiles('dist/*.ipk') != ''
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: netpreference-mvp-${{ github.run_id }}
+          path: |
+            dist/*.ipk
+            dist/SHA256SUMS
+            dist/build-info.json
+            dist/coverage.out
+            dist/logs/
+          retention-days: 30
