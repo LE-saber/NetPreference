@@ -61,6 +61,16 @@ class PackageTests(unittest.TestCase):
         self.assertEqual(set(methods),{'apply','restore','validate','status','devices','traffic'})
         bad=subprocess.run([ROOT/'dist/netpreference','rpc','call','apply'],input=b'{"command":"rm"}',stdout=subprocess.PIPE)
         self.assertNotEqual(bad.returncode,0)
+    def test_openwrt_prerm_does_not_preempt_default_service_stop(self):
+        mk=(ROOT/'openwrt/luci-app-netpreference/Makefile').read_text()
+        start=mk.index('define Package/luci-app-netpreference/prerm')
+        end=mk.index('endef',start)
+        prerm=mk[start:end]
+        self.assertNotIn('ubus call service delete',prerm)
+        self.assertNotIn('/etc/init.d/netpreference stop',prerm)
+        self.assertIn('/usr/sbin/netpreference deactivate',prerm)
+        self.assertIn('/usr/sbin/netpreference restore',prerm)
+
     def test_checksums(self):
         self.assertEqual((ROOT/'dist/SHA256SUMS').read_text().split()[0],hashlib.sha256(self.path.read_bytes()).hexdigest())
     def test_deterministic_builder(self):
