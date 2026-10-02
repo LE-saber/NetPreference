@@ -58,6 +58,6 @@ const moduleView=new Function('view','form','rpc','uci','ui','poll','dom','E','_
  const actions=moduleView.map.lookupOption('action')[0].choices.map(v=>v[0]);
  assert(actions.includes('rewrite')&&actions.includes('nxdomain')&&actions.includes('ipv4_only'));
  responses.traffic={enabled:false};await moduleView.refresh();
- assert(JSON.stringify(moduleView.trafficBox).includes('nlbwmon')&&JSON.stringify(moduleView.trafficBox).includes('NetPreference'));
+ assert(JSON.stringify(moduleView.trafficBox).includes('NetPreference')&&JSON.stringify(moduleView.trafficBox).includes('不会采样或累计流量'));
  console.log('PASS: LuCI render/status/traffic/preset and own-package-only Save & Apply contract (API doubles, not browser validation).');
 })().catch(e=>{console.error(e);process.exit(1);});
