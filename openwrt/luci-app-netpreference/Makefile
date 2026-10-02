@@ -2,7 +2,7 @@ include $(TOPDIR)/rules.mk
 
 PKG_NAME:=luci-app-netpreference
 PKG_VERSION:=0.1.0
-PKG_RELEASE:=1
+PKG_RELEASE:=2
 PKG_LICENSE:=MIT
 PKG_MAINTAINER:=LE-saber
 PKG_BUILD_DEPENDS:=golang/host
@@ -52,7 +52,11 @@ set -eu
 # Install is idle: the shipped UCI configuration has no selected devices and
 # enabled=0. Never change any upstream, firewall, nlbwmon or NAT66 configuration.
 /etc/init.d/netpreference enable
-/etc/init.d/netpreference restart
+if ubus call service list '{"name":"netpreference"}' 2>/dev/null | grep -q '"netpreference"'; then
+ /etc/init.d/netpreference restart
+else
+ /etc/init.d/netpreference start
+fi
 /etc/init.d/rpcd reload
 rm -f /tmp/luci-indexcache
 exit 0
