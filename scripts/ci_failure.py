@@ -18,4 +18,11 @@ subprocess.run(['git','config','user.name','github-actions[bot]'],check=True)
 subprocess.run(['git','config','user.email','41898282+github-actions[bot]@users.noreply.github.com'],check=True)
 subprocess.run(['git','add',str(path)],check=True)
 subprocess.run(['git','commit','-m',f'docs: record {phase} failure for run {run}'],check=True)
-subprocess.run(['git','push','origin','HEAD:feat/mvp'],check=True)
+for retry in range(3):
+    subprocess.run(['git','fetch','origin','feat/mvp'],check=True)
+    subprocess.run(['git','rebase','origin/feat/mvp'],check=True)
+    pushed=subprocess.run(['git','push','origin','HEAD:feat/mvp'])
+    if pushed.returncode == 0:
+        break
+else:
+    raise SystemExit('failed to push CI failure record after 3 rebased attempts')

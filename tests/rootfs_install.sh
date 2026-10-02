@@ -6,7 +6,7 @@ WORK=$(mktemp -d /tmp/netpreference-rootfs-XXXXXX)
 trap 'rm -rf "$WORK"' EXIT
 cd "$WORK"
 BASE=https://downloads.immortalwrt.org/releases/24.10.4/targets/x86/64
-IMAGE=immortalwrt-24.10.4-x86-64-generic-rootfs.tar.gz
+IMAGE=immortalwrt-24.10.4-x86-64-rootfs.tar.gz
 curl --fail --location --retry 1 --connect-timeout 20 --max-time 120 "$BASE/sha256sums" -o sha256sums
 curl --fail --location --retry 1 --connect-timeout 20 --max-time 120 "$BASE/$IMAGE" -o "$IMAGE"
 awk -v name="$IMAGE" '$2 == name || $2 == "*"name { print }' sha256sums > image.sha256
