@@ -47,13 +47,16 @@ jobs:
           echo "SDK_DIR=$SDK_DIR" >> "$GITHUB_ENV"
           echo "Using SDK: $SDK_DIR"
 
-      - name: Prepare SDK feeds
+      - name: Prepare SDK Go feed
         shell: bash
         run: |
           set -euo pipefail
           cd "$SDK_DIR"
-          ./scripts/feeds update packages luci
-          ./scripts/feeds install golang luci-base
+          # NetPreference ships LuCI JS/static files directly. We only need the
+          # Go build helper from packages; luci-base and the other OpenWrt
+          # components remain runtime dependencies on the target router.
+          ./scripts/feeds update packages
+          ./scripts/feeds install golang
 
       - name: Register NetPreference package
         shell: bash
