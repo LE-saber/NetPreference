@@ -14,7 +14,7 @@ awk -v name="$IMAGE" '$2 == name || $2 == "*"name { print }' sha256sums > image.
 sha256sum -c image.sha256
 mkdir root
 tar -xzf "$IMAGE" -C root
-mkdir -p root/tmp root/dev
+mkdir -p root/tmp root/dev root/var/lock
 [ -e root/dev/null ] || mknod root/dev/null c 1 3
 PACKAGE=$(find "$ROOT/dist" -maxdepth 1 -name '*.ipk' -print -quit)
 cp "$PACKAGE" root/tmp/netpreference.ipk
