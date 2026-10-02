@@ -2,7 +2,7 @@ name: ImmortalWrt SDK package
 
 on:
   push:
-    branches: [feat/mvp]
+    branches: [feat/mvp, main]
     paths:
       - '.github/workflows/sdk-build.yml'
       - 'openwrt/**'
@@ -15,7 +15,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   sdk-package:
@@ -94,3 +94,44 @@ jobs:
             dist-sdk/*.ipk
             dist-sdk/SHA256SUMS
           retention-days: 30
+
+      - name: Publish GitHub release
+        if: github.ref == 'refs/heads/main'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          PKG_VERSION="$(sed -n 's/^PKG_VERSION:=//p' openwrt/luci-app-netpreference/Makefile)"
+          PKG_RELEASE="$(sed -n 's/^PKG_RELEASE:=//p' openwrt/luci-app-netpreference/Makefile)"
+          test -n "$PKG_VERSION"
+          test -n "$PKG_RELEASE"
+          TAG="v$PKG_VERSION"
+
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG already exists; skipping publication."
+            exit 0
+          fi
+
+          cat > "$RUNNER_TEMP/release-notes.md" <<EOF
+          NetPreference $PKG_VERSION is the first public MVP release.
+
+          Package revision: $PKG_VERSION-r$PKG_RELEASE
+          Target: ImmortalWrt/OpenWrt 24.10 x86_64
+          Tested target: ImmortalWrt 24.10.4
+
+          Highlights:
+          - Per-device IPv6/IPv4 DNS preference and DNS policy control
+          - Safe fail-open interception with owned nftables state and recovery
+          - Simplified Chinese LuCI interface
+          - Per-device realtime IPv4/IPv6 traffic rates and session totals from NetPreference's own nft counters
+          - No nlbwmon dependency for traffic observation
+          - Official ImmortalWrt SDK-built x86_64 IPK
+
+          Notes:
+          - Traffic observation is diagnostic rather than billing-grade; flow/hardware offload can undercount software-path counters.
+          - DoH, DoT, VPN-contained DNS and non-port-53 DNS are outside the MVP interception scope.
+          - Existing HomeProxy, SmartDNS and NAT66 configuration is not overwritten.
+          EOF
+
+          gh release create "$TAG"             dist-sdk/*.ipk             dist-sdk/SHA256SUMS             --target "$GITHUB_SHA"             --title "NetPreference $PKG_VERSION"             --notes-file "$RUNNER_TEMP/release-notes.md"
