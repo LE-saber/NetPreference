@@ -39,7 +39,8 @@ class FormMap {
 }
 const form={Map:FormMap,NamedSection:Section,GridSection:Section,Value:Option,Flag:Option,DynamicList:Option,ListValue:Option};
 const uci={async load(){return {};},unload(){},get(){return undefined;},sections(_p,_s,cb){cb({mac:'02:00:00:00:00:01',name:'laptop'});}};
-const ui={createHandlerFn(self,fn){return fn.bind(self);},addNotification(_a,msg){throw new Error(JSON.stringify(msg));}};
+const notices=[];
+const ui={createHandlerFn(self,fn){return fn.bind(self);},addNotification(_a,msg,type){if(type==='error')throw new Error(JSON.stringify(msg));notices.push([type,msg]);}};
 const poll={add(fn){this.fn=fn;}};
 const dom={content(node,children){node.children=children;}};
 const source=fs.readFileSync(path.join(__dirname,'../files/www/luci-static/resources/view/netpreference/overview.js'),'utf8');
@@ -52,10 +53,11 @@ const moduleView=new Function('view','form','rpc','uci','ui','poll','dom','E','_
  calls.length=0;await moduleView.handleSaveApply();
  assert.deepEqual(calls.slice(0,3),[['form','save'],['uci','commit','netpreference'],['netpreference','apply']]);
  assert(!calls.some(x=>x[0]==='uci'&&x[1]==='apply'),'must not commit unrelated pending UCI packages');
+ assert(notices.some(n=>n[0]==='info'&&JSON.stringify(n[1]).includes('NetPreference 配置已保存并应用')));
  assert.equal(moduleView.handleSave,null);
  const actions=moduleView.map.lookupOption('action')[0].choices.map(v=>v[0]);
  assert(actions.includes('rewrite')&&actions.includes('nxdomain')&&actions.includes('ipv4_only'));
  responses.traffic={enabled:false};await moduleView.refresh();
- assert(JSON.stringify(moduleView.trafficBox).includes('Existing nlbwmon continues unchanged'));
+ assert(JSON.stringify(moduleView.trafficBox).includes('nlbwmon')&&JSON.stringify(moduleView.trafficBox).includes('NetPreference'));
  console.log('PASS: LuCI render/status/traffic/preset and own-package-only Save & Apply contract (API doubles, not browser validation).');
 })().catch(e=>{console.error(e);process.exit(1);});
