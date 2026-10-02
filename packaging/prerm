@@ -1,0 +1,10 @@
+#!/bin/sh
+set -eu
+[ -n "${IPKG_INSTROOT:-}" ] && exit 0
+# Do not remove the only recovery binary while redirects may still be live.
+case "${1:-remove}" in
+ upgrade|deconfigure) /usr/sbin/netpreference deactivate ;;
+ *) /usr/sbin/netpreference restore ;;
+esac
+case "${1:-remove}" in upgrade|deconfigure) ;; *) /etc/init.d/netpreference disable ;; esac
+exit 0

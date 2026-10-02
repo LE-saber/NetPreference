@@ -1,0 +1,96 @@
+name: ImmortalWrt SDK package
+
+on:
+  push:
+    branches: [feat/mvp]
+    paths:
+      - '.github/workflows/sdk-build.yml'
+      - 'openwrt/**'
+      - 'cmd/**'
+      - 'internal/**'
+      - 'files/**'
+      - 'packaging/**'
+      - 'go.mod'
+      - 'LICENSE'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  sdk-package:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      SDK_URL: https://downloads.immortalwrt.org/releases/24.10.4/targets/x86/64/immortalwrt-sdk-24.10.4-x86-64_gcc-13.3.0_musl.Linux-x86_64.tar.zst
+      SDK_SHA256: 4f5de9da8674d4acdb6bd2afe594ea079c9983690d9e2eb1661a99b8fcd7d270
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      - name: Install host tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y zstd rsync
+
+      - name: Download and verify ImmortalWrt SDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/immortalwrt-sdk"
+          curl -fL --retry 3 --retry-delay 2 "$SDK_URL" -o "$RUNNER_TEMP/sdk.tar.zst"
+          echo "$SDK_SHA256  $RUNNER_TEMP/sdk.tar.zst" | sha256sum -c -
+          tar --zstd -xf "$RUNNER_TEMP/sdk.tar.zst" -C "$RUNNER_TEMP/immortalwrt-sdk"
+          SDK_DIR="$(find "$RUNNER_TEMP/immortalwrt-sdk" -mindepth 1 -maxdepth 1 -type d -print -quit)"
+          test -n "$SDK_DIR"
+          echo "SDK_DIR=$SDK_DIR" >> "$GITHUB_ENV"
+          echo "Using SDK: $SDK_DIR"
+
+      - name: Prepare SDK Go feed
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$SDK_DIR"
+          # NetPreference ships LuCI JS/static files directly. We only need the
+          # Go build helper from packages; luci-base and the other OpenWrt
+          # components remain runtime dependencies on the target router.
+          ./scripts/feeds update packages
+          ./scripts/feeds install golang
+
+      - name: Register NetPreference package
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$SDK_DIR"
+          rm -rf package/luci-app-netpreference
+          ln -s "$GITHUB_WORKSPACE/openwrt/luci-app-netpreference" package/luci-app-netpreference
+          make defconfig
+
+      - name: Build with official SDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$SDK_DIR"
+          make package/luci-app-netpreference/clean V=s NETPREFERENCE_SRC="$GITHUB_WORKSPACE"
+          make package/luci-app-netpreference/compile V=s NETPREFERENCE_SRC="$GITHUB_WORKSPACE" -j"$(nproc)"
+          PKG="$(find bin -type f -name 'luci-app-netpreference_*.ipk' -print -quit)"
+          test -n "$PKG"
+          mkdir -p "$GITHUB_WORKSPACE/dist-sdk"
+          cp "$PKG" "$GITHUB_WORKSPACE/dist-sdk/"
+          (
+            cd "$GITHUB_WORKSPACE/dist-sdk"
+            sha256sum *.ipk > SHA256SUMS
+          )
+          echo "Built package:"
+          ls -lh "$GITHUB_WORKSPACE/dist-sdk"
+          cat "$GITHUB_WORKSPACE/dist-sdk/SHA256SUMS"
+
+      - name: Upload SDK-built IPK
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: netpreference-immortalwrt-sdk-${{ github.run_id }}
+          path: |
+            dist-sdk/*.ipk
+            dist-sdk/SHA256SUMS
+          retention-days: 30

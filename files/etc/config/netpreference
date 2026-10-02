@@ -1,0 +1,9 @@
+config global 'main'
+ option enabled '0'
+ option monitor '0'
+ list interface 'br-lan'
+ option upstream '127.0.0.1:53'
+ option timeout_ms '2000'
+
+# Installation is idle. Add devices in LuCI, then Save & Apply.
+# Global rules apply only to enrolled/enabled devices, never to other LAN hosts.
