@@ -170,13 +170,27 @@ config rule 'custom'
                 expect(first,host,1,'rewrite.test','203.0.113.77',proto=proto)
                 expect(first,host,28,'rewrite.test','2001:db8::77',proto=proto)
                 expect(second,host,1,'rewrite.test','198.51.100.7',proto=proto)
-        # Explicitly exercise aliases and IPv6 link-local RDNSS destinations.
-        # Baseline fixture binds wildcard without packet-info, so alias tests
-        # below intentionally target only the packet-info-correct policy proxy.
-        for host in ('192.0.2.254', 'fe80::1%eth0'):
-            for proto in ('udp', 'tcp'):
-                expect(first,host,1,'rewrite.test','203.0.113.77',proto=proto)
-                expect(first,host,28,'rewrite.test','2001:db8::77',proto=proto)
+        # Explicitly exercise an IPv4 alias immediately.
+        for proto in ('udp', 'tcp'):
+            expect(first,'192.0.2.254',1,'rewrite.test','203.0.113.77',proto=proto)
+            expect(first,'192.0.2.254',28,'rewrite.test','2001:db8::77',proto=proto)
+
+        # Link-local RDNSS has the same neighbour-learning boundary as a new
+        # SLAAC/privacy address. The first packet may fail open; after the
+        # manager discovers fe80::2 it must become subject to policy.
+        first_ll=query(first,'fe80::1%eth0',1,'rewrite.test')
+        assert first_ll['addresses'] in (['198.51.100.7'],['203.0.113.77']),first_ll
+
+        def ll_discovered():
+            ds=ctl('devices').get('devices',[])
+            h=next((x for x in ds if x['mac']=='02:00:00:00:00:01'),None)
+            return h if h and 'fe80::2' in h.get('ipv6',[]) else None
+        selected_host=wait_for(ll_discovered,12)
+        print('DEVICES_AFTER_LL',json.dumps(selected_host,sort_keys=True),flush=True)
+        wait_for(lambda:'fe80::2' in ns(router,'nft','-j','list','set','inet','netpreference','clients6'),12)
+        for proto in ('udp', 'tcp'):
+            expect(first,'fe80::1%eth0',1,'rewrite.test','203.0.113.77',proto=proto)
+            expect(first,'fe80::1%eth0',28,'rewrite.test','2001:db8::77',proto=proto)
         expect(first,'192.0.2.1',1,'x.blocked.test',rcode=3)
         expect(second,'192.0.2.1',1,'x.blocked.test','198.51.100.7')
         r=expect(first,'192.0.2.1',1,'preference.test','198.51.100.7');assert r['elapsed']>=0.07,r
