@@ -2,6 +2,7 @@ package netpref
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 )
