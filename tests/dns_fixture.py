@@ -80,12 +80,19 @@ def query(host,qtype,name,transport='udp',source_port=0):
     question=b''.join(bytes([len(part)])+part.encode() for part in name.strip('.').split('.'))+b'\x00'+struct.pack('!HH',qtype,1)
     data=struct.pack('!HHHHHH',ident,0x100,1,0,0,0)+question
     fam=socket.AF_INET6 if ':' in host else socket.AF_INET
+    scope_id=0
+    connect_host=host
+    if fam==socket.AF_INET6 and '%' in host:
+        connect_host,zone=host.rsplit('%',1)
+        scope_id=socket.if_nametoindex(zone)
     sock=socket.socket(fam,socket.SOCK_STREAM if transport=='tcp' else socket.SOCK_DGRAM)
     sock.settimeout(4)
-    if source_port:sock.bind(('::' if fam==socket.AF_INET6 else '0.0.0.0',source_port))
+    if source_port:
+        sock.bind(('::',source_port,0,0) if fam==socket.AF_INET6 else ('0.0.0.0',source_port))
+    target=(connect_host,53,0,scope_id) if fam==socket.AF_INET6 else (connect_host,53)
     started=time.monotonic()
     try:
-        sock.connect((host,53))
+        sock.connect(target)
         if transport=='tcp':
             sock.sendall(struct.pack('!H',len(data))+data)
             response=recv_exact(sock,struct.unpack('!H',recv_exact(sock,2))[0])
