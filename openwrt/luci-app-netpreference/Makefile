@@ -2,7 +2,7 @@ include $(TOPDIR)/rules.mk
 
 PKG_NAME:=luci-app-netpreference
 PKG_VERSION:=0.1.0
-PKG_RELEASE:=2
+PKG_RELEASE:=3
 PKG_LICENSE:=MIT
 PKG_MAINTAINER:=LE-saber
 PKG_BUILD_DEPENDS:=golang/host
@@ -70,8 +70,11 @@ case "$${1:-remove}" in
  upgrade|deconfigure) /usr/sbin/netpreference deactivate ;;
  *) /usr/sbin/netpreference restore ;;
 esac
-/etc/init.d/netpreference stop
-case "$${1:-remove}" in upgrade|deconfigure) ;; *) /etc/init.d/netpreference disable ;; esac
+# The service may not exist after a partial/failed earlier install. The policy
+# state has already been deactivated/restored above, so terminate any procd
+# registration directly and tolerate "Not found".
+ubus call service delete '{"name":"netpreference"}' >/dev/null 2>&1 || true
+case "${1:-remove}" in upgrade|deconfigure) ;; *) /etc/init.d/netpreference disable ;; esac
 exit 0
 endef
 define Package/luci-app-netpreference/postrm
