@@ -33,6 +33,8 @@ Version: 0-test
 Architecture: x86_64
 Status: install ok installed
 EOF
+  mkdir -p root/usr/lib/opkg/info
+  : >"root/usr/lib/opkg/info/$dep.list"
  fi
 done
 chroot root /bin/opkg print-architecture
