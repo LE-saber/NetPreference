@@ -16,9 +16,12 @@ def unpack(data):
     with tarfile.open(fileobj=io.BytesIO(data),mode='r:gz') as t:
         result={}
         for m in t.getmembers():
-            assert m.isfile(), m.name
             assert m.name.startswith('./') and '..' not in Path(m.name).parts, m.name
             assert m.uid==0 and m.gid==0
+            if m.isdir():
+                assert m.mode == 0o755, m.name
+                continue
+            assert m.isfile(), m.name
             result[m.name[2:]]=(t.extractfile(m).read(),m.mode)
         return result
 
@@ -37,6 +40,15 @@ class PackageTests(unittest.TestCase):
             self.assertIn(line,control)
         self.assertNotIn('Depends: nlbwmon',control)
         self.assertEqual(self.control['conffiles'][0],b'/etc/config/netpreference\n')
+    def test_data_archive_has_parent_directories(self):
+        with tarfile.open(fileobj=io.BytesIO(self.outer['data.tar.gz'][0]),mode='r:gz') as tf:
+            dirs={m.name[2:].rstrip('/') for m in tf.getmembers() if m.isdir()}
+        for name in self.files:
+            parent=Path(name).parent
+            while parent != Path('.'):
+                self.assertIn(parent.as_posix(),dirs,name)
+                parent=parent.parent
+
     def test_static_binary_and_permissions(self):
         data,mode=self.files['usr/sbin/netpreference'];builder.verify_elf(data)
         self.assertEqual(mode,0o755)

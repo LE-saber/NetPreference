@@ -24,6 +24,19 @@ DEPS = 'luci-base, rpcd, uci, firewall4, nftables-json, ip-full, conntrack'
 def archive(entries: dict[str, tuple[bytes, int]]) -> bytes:
     out = io.BytesIO()
     with tarfile.open(fileobj=out, mode='w', format=tarfile.GNU_FORMAT) as tf:
+        directories: set[str] = set()
+        for name in entries:
+            parent = Path(name).parent
+            while parent != Path('.'):
+                directories.add(parent.as_posix())
+                parent = parent.parent
+        for name in sorted(directories, key=lambda p: (p.count('/'), p)):
+            ti = tarfile.TarInfo('./' + name)
+            ti.type = tarfile.DIRTYPE
+            ti.size, ti.mode, ti.mtime = 0, 0o755, EPOCH
+            ti.uid = ti.gid = 0
+            ti.uname = ti.gname = ''
+            tf.addfile(ti)
         for name, (data, mode) in sorted(entries.items()):
             ti = tarfile.TarInfo('./' + name)
             ti.size, ti.mode, ti.mtime = len(data), mode, EPOCH
