@@ -148,11 +148,23 @@ config rule 'custom'
         print('DEVICES',json.dumps(devices,sort_keys=True),flush=True)
         selected_host=next(h for h in devices['devices'] if h['mac']=='02:00:00:00:00:01')
         assert '192.0.2.2' in selected_host['ipv4'],selected_host
-        assert 'fd42:1::2' in selected_host['ipv6'],selected_host
+
+        # An IPv6 privacy/SLAAC address not yet present in the router neighbour
+        # cache is intentionally fail-open. Exercise one packet to create
+        # neighbour state, then require the manager loop to discover the address
+        # and refresh clients6 before enforcing subsequent DNS interception.
+        first_v6=query(first,'fd42:1::1',1,'rewrite.test')
+        assert first_v6['addresses'] in (['198.51.100.7'],['203.0.113.77']),first_v6
+
+        def v6_discovered():
+            ds=ctl('devices').get('devices',[])
+            h=next((x for x in ds if x['mac']=='02:00:00:00:00:01'),None)
+            return h if h and 'fd42:1::2' in h.get('ipv6',[]) else None
+        selected_host=wait_for(v6_discovered,12)
+        print('DEVICES_AFTER_V6',json.dumps(selected_host,sort_keys=True),flush=True)
         print('ROUTE6',ns(first,'ip','-6','route','get','fd42:1::1').strip(),flush=True)
         print('CLIENTS6',ns(router,'nft','list','set','inet','netpreference','clients6').strip(),flush=True)
-        clients6=ns(router,'nft','-j','list','set','inet','netpreference','clients6')
-        assert 'fd42:1::2' in clients6,clients6
+        wait_for(lambda:'fd42:1::2' in ns(router,'nft','-j','list','set','inet','netpreference','clients6'),12)
         for host in ('192.0.2.1','fd42:1::1'):
             for proto in ('udp','tcp'):
                 expect(first,host,1,'rewrite.test','203.0.113.77',proto=proto)
