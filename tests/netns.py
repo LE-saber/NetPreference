@@ -144,6 +144,15 @@ config rule 'custom'
         wait_for(lambda:ctl('status'))
         expect(first,'192.0.2.1',1,'rewrite.test','198.51.100.7')
         assert ctl('apply')['ok'];assert ctl('status')['active']
+        devices=ctl('devices')
+        print('DEVICES',json.dumps(devices,sort_keys=True),flush=True)
+        selected_host=next(h for h in devices['devices'] if h['mac']=='02:00:00:00:00:01')
+        assert '192.0.2.2' in selected_host['ipv4'],selected_host
+        assert 'fd42:1::2' in selected_host['ipv6'],selected_host
+        print('ROUTE6',ns(first,'ip','-6','route','get','fd42:1::1').strip(),flush=True)
+        print('CLIENTS6',ns(router,'nft','list','set','inet','netpreference','clients6').strip(),flush=True)
+        clients6=ns(router,'nft','-j','list','set','inet','netpreference','clients6')
+        assert 'fd42:1::2' in clients6,clients6
         for host in ('192.0.2.1','fd42:1::1'):
             for proto in ('udp','tcp'):
                 expect(first,host,1,'rewrite.test','203.0.113.77',proto=proto)
