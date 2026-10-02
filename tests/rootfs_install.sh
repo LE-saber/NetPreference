@@ -18,15 +18,30 @@ mkdir -p root/tmp root/dev root/var/lock
 [ -e root/dev/null ] || mknod root/dev/null c 1 3
 PACKAGE=$(find "$ROOT/dist" -maxdepth 1 -name '*.ipk' -print -quit)
 cp "$PACKAGE" root/tmp/netpreference.ipk
-# The target rootfs may lack LuCI/dependencies. Force-depends is confined to this
-# disposable offline package-format test, never recommended on the real router.
+# The minimal target rootfs omits a few runtime tools that are present on the
+# real target router. opkg filters a local package candidate before force-depends
+# can apply, so register isolated placeholder status entries for those missing
+# dependencies. They are never executed and exist only inside this disposable
+# rootfs package-format lab.
+STATUS=root/usr/lib/opkg/status
+for dep in ip-full conntrack; do
+ if ! grep -q "^Package: $dep$" "$STATUS"; then
+  cat >>"$STATUS" <<EOF
+
+Package: $dep
+Version: 0-test
+Architecture: x86_64
+Status: install ok installed
+EOF
+ fi
+done
 chroot root /bin/opkg print-architecture
-IPKG_INSTROOT=/ chroot root /bin/opkg --nodeps install /tmp/netpreference.ipk
+IPKG_INSTROOT=/ chroot root /bin/opkg install /tmp/netpreference.ipk
 chroot root /usr/sbin/netpreference version
 IPKG_INSTROOT=/ chroot root /bin/opkg status luci-app-netpreference
 grep -q "option enabled '0'" root/etc/config/netpreference
 test -x root/usr/libexec/rpcd/netpreference
 test -s root/usr/share/rpcd/acl.d/luci-app-netpreference.json
-IPKG_INSTROOT=/ chroot root /bin/opkg --nodeps remove luci-app-netpreference
+IPKG_INSTROOT=/ chroot root /bin/opkg remove luci-app-netpreference
 test ! -e root/usr/sbin/netpreference
 printf '%s\n' 'PASS: ImmortalWrt 24.10.4 rootfs opkg install/version/remove. Offline scripts skipped by design; no target-kernel or LuCI browser claim.'
