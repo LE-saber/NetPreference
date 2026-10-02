@@ -77,7 +77,7 @@ return view.extend({
 
   o = g.option(form.Flag, 'monitor', '启用流量观察');
   o.default = '0'; o.rmempty = false;
-  o.description = '累计流量读取现有 nlbwmon 数据库且不会清零；实时速率使用可选 nft 计数器。启用流量分流/硬件卸载时，实时速率可能低估。';
+  o.description = '实时速率和累计流量都直接来自 NetPreference 自己的 nft 计数器，不依赖 nlbwmon。累计值用于粗略判断 IPv4 / IPv6 流量比例；关闭监控、重启服务或计数器重建后从 0 开始。启用流量分流/硬件卸载时可能低估。';
 
   var d = m.section(form.GridSection, 'device', '设备策略');
   d.addremove = true; d.anonymous = true; d.sortable = true;
@@ -181,7 +181,7 @@ return view.extend({
     E('div', { 'class': 'cbi-section' }, [
      E('h3', {}, '安全恢复'),
      restore,
-     E('p', { 'style': 'margin-top:.8em;opacity:.75;' }, '恢复操作只删除 NetPreference 自己创建的规则，不会覆盖 HomeProxy、SmartDNS、防火墙或 nlbwmon 的现有配置。DoH/DoT、VPN 内 DNS 与客户端自身缓存不属于本插件的 53 端口策略范围。')
+     E('p', { 'style': 'margin-top:.8em;opacity:.75;' }, '恢复操作只删除 NetPreference 自己创建的规则，不会覆盖 HomeProxy、SmartDNS、防火墙或其它监控服务的现有配置。DoH/DoT、VPN 内 DNS 与客户端自身缓存不属于本插件的 53 端口策略范围。')
     ]),
     node,
     self.trafficBox
@@ -219,13 +219,13 @@ return view.extend({
    if (!t.enabled) {
     dom.content(self.trafficBox, [
      E('h3', {}, '流量观察'),
-     E('p', {}, '流量观察当前关闭。系统原有 nlbwmon 会继续正常运行，不会被 NetPreference 停止或重置。')
+     E('p', {}, '流量观察当前关闭。NetPreference 不会采样或累计流量；其它系统服务不受影响。')
     ]);
     return;
    }
 
    var table = E('table', { 'class': 'table' }, E('tr', { 'class': 'tr table-titles' },
-    ['设备', 'IPv4 实时', 'IPv6 实时', 'IPv4 累计', 'IPv6 累计', 'IPv6 占比'].map(function(h) {
+    ['设备', 'IPv4 实时', 'IPv6 实时', 'IPv4 会话累计', 'IPv6 会话累计', 'IPv6 占比'].map(function(h) {
      return E('th', { 'class': 'th' }, h);
     })));
 
@@ -243,7 +243,7 @@ return view.extend({
 
    var body = [
     E('h3', {}, '流量观察'),
-    E('p', {}, '累计流量表示当前 nlbwmon 统计周期，不是设备终身累计；实时速率表示采样窗口内经过路由软件路径的字节数。')
+    E('p', {}, '实时速率与会话累计都来自 NetPreference 自己的 nft 计数器。会话累计从监控开始后的相邻采样字节差持续相加，仅用于粗略判断 IPv4 / IPv6 流量比例；关闭监控、服务重启或计数器重建后会从 0 开始。')
    ];
    if (t.caveat || t.error) body.push(E('p', { 'style': 'opacity:.75;' }, (t.caveat || '') + ' ' + (t.error || '')));
    if ((t.rows || []).length) body.push(table);
