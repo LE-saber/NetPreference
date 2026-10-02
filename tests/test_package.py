@@ -36,7 +36,7 @@ class PackageTests(unittest.TestCase):
         self.assertEqual(set(self.outer),{'debian-binary','control.tar.gz','data.tar.gz'})
         self.assertEqual(self.outer['debian-binary'][0],b'2.0\n')
         control=self.control['control'][0].decode()
-        for line in ['Architecture: x86_64','Package: luci-app-netpreference','Version: 0.1.0-1']:
+        for line in ['Architecture: x86_64','Package: luci-app-netpreference',f'Version: {builder.VERSION}']:
             self.assertIn(line,control)
         self.assertNotIn('Depends: nlbwmon',control)
         self.assertEqual(self.control['conffiles'][0],b'/etc/config/netpreference\n')
