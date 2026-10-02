@@ -135,11 +135,11 @@ return view.extend({
 
   var r = m.section(form.GridSection, 'rule', '域名规则');
   r.addremove = true; r.anonymous = true; r.sortable = true;
-  r.description = '“全部已加入设备”只作用于 NetPreference 管理的设备。设备级规则优先于全局规则；随后按最长域名/精确匹配决定，仍相同时按列表顺序。*.example.com 包含根域 example.com 。
+  r.description = '“全部已加入设备”只作用于 NetPreference 管理的设备。设备级规则优先于全局规则；随后按最长域名/精确匹配决定，仍相同时按列表顺序。*.example.com 包含根域 example.com。';
   o = r.option(form.Flag, 'enabled', '启用'); o.default = '1'; o.rmempty = false;
-  o = r.option(form.Value, 'device', '作用舃围（MAC 或 *）'); o.default = '*'; o.rmempty = false;
-  o.value('*', '全部已加入设备�);
-  uci.sections('netpreference', 'device', function(s) { if (s.mac) op.value(s.mac, s.name || s.mac); });
+  o = r.option(form.Value, 'device', '作用范围（MAC 或 *）'); o.default = '*'; o.rmempty = false;
+  o.value('*', '全部已加入设备');
+  uci.sections('netpreference', 'device', function(s) { if (s.mac) o.value(s.mac, s.name || s.mac); });
 
   o = r.option(form.Value, 'domain', '域名'); o.placeholder = '*.example.com'; o.rmempty = false;
   o = r.option(form.ListValue, 'qtype', '查询类型'); o.default = '*'; o.rmempty = false;
