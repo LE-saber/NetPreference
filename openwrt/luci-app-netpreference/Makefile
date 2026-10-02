@@ -33,16 +33,16 @@ define Package/luci-app-netpreference/conffiles
 endef
 
 define Build/Prepare
- mkdir -p $(PKG_BUILD_DIR)
- $(CP) $(NETPREFERENCE_SRC)/go.mod $(NETPREFERENCE_SRC)/cmd $(NETPREFERENCE_SRC)/internal $(PKG_BUILD_DIR)/
+	mkdir -p $(PKG_BUILD_DIR)
+	$(CP) $(NETPREFERENCE_SRC)/go.mod $(NETPREFERENCE_SRC)/cmd $(NETPREFERENCE_SRC)/internal $(PKG_BUILD_DIR)/
 endef
 
 define Package/luci-app-netpreference/install
- $(call GoPackage/Package/Install/Bin,$(1))
- $(CP) $(NETPREFERENCE_SRC)/files/* $(1)/
- chmod 0755 $(1)/etc/init.d/netpreference $(1)/usr/libexec/rpcd/netpreference
- $(INSTALL_DIR) $(1)/usr/share/netpreference
- $(INSTALL_DATA) $(NETPREFERENCE_SRC)/LICENSE $(1)/usr/share/netpreference/LICENSE
+	$(call GoPackage/Package/Install/Bin,$(1))
+	$(CP) $(NETPREFERENCE_SRC)/files/* $(1)/
+	chmod 0755 $(1)/etc/init.d/netpreference $(1)/usr/libexec/rpcd/netpreference
+	$(INSTALL_DIR) $(1)/usr/share/netpreference
+	$(INSTALL_DATA) $(NETPREFERENCE_SRC)/LICENSE $(1)/usr/share/netpreference/LICENSE
 endef
 
 define Package/luci-app-netpreference/postinst
