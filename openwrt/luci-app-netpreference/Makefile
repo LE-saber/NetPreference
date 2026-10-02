@@ -74,7 +74,7 @@ esac
 # state has already been deactivated/restored above, so terminate any procd
 # registration directly and tolerate "Not found".
 ubus call service delete '{"name":"netpreference"}' >/dev/null 2>&1 || true
-case "${1:-remove}" in upgrade|deconfigure) ;; *) /etc/init.d/netpreference disable ;; esac
+case "$${1:-remove}" in upgrade|deconfigure) ;; *) /etc/init.d/netpreference disable ;; esac
 exit 0
 endef
 define Package/luci-app-netpreference/postrm
