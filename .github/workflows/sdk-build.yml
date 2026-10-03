@@ -1,22 +1,14 @@
 name: ImmortalWrt SDK package
-
 on:
-  push:
-    branches: [feat/mvp, main]
-    paths:
-      - '.github/workflows/sdk-build.yml'
-      - 'openwrt/**'
-      - 'cmd/**'
-      - 'internal/**'
-      - 'files/**'
-      - 'packaging/**'
-      - 'go.mod'
-      - 'LICENSE'
+  workflow_call:
+    inputs:
+      legacy_artifact:
+        type: string
+        required: false
+        default: ''
   workflow_dispatch:
-
 permissions:
-  contents: write
-
+  contents: read
 jobs:
   sdk-package:
     runs-on: ubuntu-24.04
@@ -24,114 +16,99 @@ jobs:
     env:
       SDK_URL: https://downloads.immortalwrt.org/releases/24.10.4/targets/x86/64/immortalwrt-sdk-24.10.4-x86-64_gcc-13.3.0_musl.Linux-x86_64.tar.zst
       SDK_SHA256: 4f5de9da8674d4acdb6bd2afe594ea079c9983690d9e2eb1661a99b8fcd7d270
-
     steps:
-      - name: Checkout
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
-
-      - name: Install host tools
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y zstd rsync
-
-      - name: Download and verify ImmortalWrt SDK
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - run: mkdir -p dist-sdk/logs
+      - name: Download prior-version upgrade fixture from verified job
+        if: inputs.legacy_artifact != ''
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: ${{ inputs.legacy_artifact }}
+          path: dist-legacy
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
+        if: inputs.legacy_artifact == ''
+        with:
+          go-version: stable
+          cache: false
+      - name: Prepare legacy fixture for standalone manual SDK build
+        if: inputs.legacy_artifact == ''
+        run: bash scripts/build_legacy.sh
+      - name: Install SDK host tools
+        id: sdk_tools
+        run: sudo apt-get update && sudo apt-get install -y zstd rsync
+      - name: Download and verify the official SDK
+        id: sdk_download
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/immortalwrt-sdk"
-          curl -fL --retry 3 --retry-delay 2 "$SDK_URL" -o "$RUNNER_TEMP/sdk.tar.zst"
-          echo "$SDK_SHA256  $RUNNER_TEMP/sdk.tar.zst" | sha256sum -c -
+          curl -fL --retry 3 --retry-delay 2 "$SDK_URL" -o "$RUNNER_TEMP/sdk.tar.zst" 2>&1 | tee dist-sdk/logs/sdk_download.txt
+          echo "$SDK_SHA256  $RUNNER_TEMP/sdk.tar.zst" | sha256sum -c - | tee -a dist-sdk/logs/sdk_download.txt
           tar --zstd -xf "$RUNNER_TEMP/sdk.tar.zst" -C "$RUNNER_TEMP/immortalwrt-sdk"
-          SDK_DIR="$(find "$RUNNER_TEMP/immortalwrt-sdk" -mindepth 1 -maxdepth 1 -type d -print -quit)"
+          SDK_DIR=$(find "$RUNNER_TEMP/immortalwrt-sdk" -mindepth 1 -maxdepth 1 -type d -print -quit)
           test -n "$SDK_DIR"
           echo "SDK_DIR=$SDK_DIR" >> "$GITHUB_ENV"
-          echo "Using SDK: $SDK_DIR"
-
-      - name: Prepare SDK Go feed
+      - name: Prepare official Go packaging helper
+        id: sdk_feed
         shell: bash
         run: |
           set -euo pipefail
           cd "$SDK_DIR"
-          # NetPreference ships LuCI JS/static files directly. We only need the
-          # Go build helper from packages; luci-base and the other OpenWrt
-          # components remain runtime dependencies on the target router.
-          ./scripts/feeds update packages
-          ./scripts/feeds install golang
-
-      - name: Register NetPreference package
+          ./scripts/feeds update packages 2>&1 | tee "$GITHUB_WORKSPACE/dist-sdk/logs/sdk_feed.txt"
+          ./scripts/feeds install golang 2>&1 | tee -a "$GITHUB_WORKSPACE/dist-sdk/logs/sdk_feed.txt"
+          git -C feeds/packages rev-parse HEAD > "$GITHUB_WORKSPACE/dist-sdk/packages-feed-commit.txt"
+      - name: Build and inspect official SDK IPK
+        id: sdk_build
         shell: bash
         run: |
           set -euo pipefail
           cd "$SDK_DIR"
-          rm -rf package/luci-app-netpreference
           ln -s "$GITHUB_WORKSPACE/openwrt/luci-app-netpreference" package/luci-app-netpreference
-          make defconfig
-
-      - name: Build with official SDK
+          make defconfig 2>&1 | tee "$GITHUB_WORKSPACE/dist-sdk/logs/sdk_build.txt"
+          make package/luci-app-netpreference/clean V=s NETPREFERENCE_SRC="$GITHUB_WORKSPACE" 2>&1 | tee -a "$GITHUB_WORKSPACE/dist-sdk/logs/sdk_build.txt"
+          make package/luci-app-netpreference/compile V=s NETPREFERENCE_SRC="$GITHUB_WORKSPACE" -j"$(nproc)" 2>&1 | tee -a "$GITHUB_WORKSPACE/dist-sdk/logs/sdk_build.txt"
+          PKG=$(find bin -type f -name 'luci-app-netpreference_*.ipk' -print -quit)
+          test -n "$PKG"
+          cp "$PKG" "$GITHUB_WORKSPACE/dist-sdk/"
+          cd "$GITHUB_WORKSPACE"
+          python3 scripts/inspect_ipk.py dist-sdk/*.ipk > dist-sdk/build-info.json
+          python3 - <<'PY'
+          import json,os,pathlib
+          p=pathlib.Path('dist-sdk/build-info.json');d=json.loads(p.read_text())
+          d.update(sdk_url=os.environ['SDK_URL'],sdk_sha256=os.environ['SDK_SHA256'],packages_feed_commit=pathlib.Path('dist-sdk/packages-feed-commit.txt').read_text().strip())
+          p.write_text(json.dumps(d,indent=2)+'\n')
+          PY
+          git archive HEAD | gzip -n > dist-sdk/source.tar.gz
+          (cd dist-sdk && sha256sum *.ipk > SHA256SUMS)
+          cat dist-sdk/build-info.json
+      - name: Official target userspace install and r6 upgrade
+        id: sdk_rootfs
         shell: bash
         run: |
           set -euo pipefail
-          cd "$SDK_DIR"
-          make package/luci-app-netpreference/clean V=s NETPREFERENCE_SRC="$GITHUB_WORKSPACE"
-          make package/luci-app-netpreference/compile V=s NETPREFERENCE_SRC="$GITHUB_WORKSPACE" -j"$(nproc)"
-          PKG="$(find bin -type f -name 'luci-app-netpreference_*.ipk' -print -quit)"
-          test -n "$PKG"
-          mkdir -p "$GITHUB_WORKSPACE/dist-sdk"
-          cp "$PKG" "$GITHUB_WORKSPACE/dist-sdk/"
-          (
-            cd "$GITHUB_WORKSPACE/dist-sdk"
-            sha256sum *.ipk > SHA256SUMS
-          )
-          echo "Built package:"
-          ls -lh "$GITHUB_WORKSPACE/dist-sdk"
-          cat "$GITHUB_WORKSPACE/dist-sdk/SHA256SUMS"
-
-      - name: Upload SDK-built IPK
+          PKG=$(find "$GITHUB_WORKSPACE/dist-sdk" -name '*.ipk' -print -quit)
+          sudo env NETPREFERENCE_IPK="$PKG" bash tests/rootfs_install.sh 2>&1 | tee dist-sdk/logs/sdk_rootfs.txt
+      - name: Capture SDK phase outcomes
+        if: always()
+        env:
+          SDK_TOOLS_RESULT: ${{ steps.sdk_tools.outcome }}
+          SDK_DOWNLOAD_RESULT: ${{ steps.sdk_download.outcome }}
+          SDK_FEED_RESULT: ${{ steps.sdk_feed.outcome }}
+          SDK_BUILD_RESULT: ${{ steps.sdk_build.outcome }}
+          SDK_ROOTFS_RESULT: ${{ steps.sdk_rootfs.outcome }}
+        run: |
+          mkdir -p dist-sdk/logs
+          python3 - <<'PY'
+          import json,os,pathlib
+          pathlib.Path('dist-sdk/outcomes.json').write_text(json.dumps({k[:-7].lower():v for k,v in os.environ.items() if k.endswith('_RESULT')}))
+          PY
+      - name: Upload package and evidence (inspect outcomes before installing)
+        if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: netpreference-immortalwrt-sdk-${{ github.run_id }}
-          path: |
-            dist-sdk/*.ipk
-            dist-sdk/SHA256SUMS
+          path: dist-sdk/
           retention-days: 30
-
-      - name: Publish GitHub release
-        if: github.ref == 'refs/heads/main'
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          PKG_VERSION="$(sed -n 's/^PKG_VERSION:=//p' openwrt/luci-app-netpreference/Makefile)"
-          PKG_RELEASE="$(sed -n 's/^PKG_RELEASE:=//p' openwrt/luci-app-netpreference/Makefile)"
-          test -n "$PKG_VERSION"
-          test -n "$PKG_RELEASE"
-          TAG="v$PKG_VERSION"
-
-          if gh release view "$TAG" >/dev/null 2>&1; then
-            echo "Release $TAG already exists; skipping publication."
-            exit 0
-          fi
-
-          cat > "$RUNNER_TEMP/release-notes.md" <<EOF
-          NetPreference $PKG_VERSION is the first public MVP release.
-
-          Package revision: $PKG_VERSION-r$PKG_RELEASE
-          Target: ImmortalWrt/OpenWrt 24.10 x86_64
-          Tested target: ImmortalWrt 24.10.4
-
-          Highlights:
-          - Per-device IPv6/IPv4 DNS preference and DNS policy control
-          - Safe fail-open interception with owned nftables state and recovery
-          - Simplified Chinese LuCI interface
-          - Per-device realtime IPv4/IPv6 traffic rates and session totals from NetPreference's own nft counters
-          - No nlbwmon dependency for traffic observation
-          - Official ImmortalWrt SDK-built x86_64 IPK
-
-          Notes:
-          - Traffic observation is diagnostic rather than billing-grade; flow/hardware offload can undercount software-path counters.
-          - DoH, DoT, VPN-contained DNS and non-port-53 DNS are outside the MVP interception scope.
-          - Existing HomeProxy, SmartDNS and NAT66 configuration is not overwritten.
-          EOF
-
-          gh release create "$TAG"             dist-sdk/*.ipk             dist-sdk/SHA256SUMS             --target "$GITHUB_SHA"             --title "NetPreference $PKG_VERSION"             --notes-file "$RUNNER_TEMP/release-notes.md"
