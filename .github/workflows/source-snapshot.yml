@@ -1,0 +1,26 @@
+name: Development source snapshot
+on:
+  push:
+    branches: ['feat/0.2.0-policy-profiles']
+    paths: ['.github/workflows/source-snapshot.yml']
+permissions:
+  contents: read
+jobs:
+  snapshot:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Archive exact source for offline development
+        run: |
+          mkdir -p snapshot
+          git archive --format=tar HEAD | gzip -n > snapshot/source.tar.gz
+          git rev-parse HEAD > snapshot/COMMIT
+          cd snapshot && sha256sum source.tar.gz > SHA256SUMS
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: netpreference-source-${{ github.run_id }}
+          path: snapshot/
+          retention-days: 7
