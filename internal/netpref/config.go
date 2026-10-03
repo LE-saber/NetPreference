@@ -11,19 +11,26 @@ import (
 	"strings"
 )
 
-const Version = "0.1.0"
+const Version = "0.2.0"
 const DNSPort = 1053
 const MaxDevices = 128
 
 // Config is validated before publication and must then be treated as immutable.
 type Config struct {
-	Enabled    bool     `json:"enabled"`
-	Monitor    bool     `json:"monitor"`
-	Interfaces []string `json:"interfaces"`
-	Upstream   string   `json:"upstream"`
-	TimeoutMS  int      `json:"timeout_ms"`
-	Devices    []Device `json:"devices"`
-	Rules      []Rule   `json:"rules"`
+	Enabled    bool        `json:"enabled"`
+	Monitor    bool        `json:"monitor"`
+	Interfaces []string    `json:"interfaces"`
+	Upstream   string      `json:"upstream"`
+	TimeoutMS  int         `json:"timeout_ms"`
+	Devices    []Device    `json:"devices"`
+	Rules      []Rule      `json:"rules"`
+	Profiles   []Profile   `json:"profiles,omitempty"`
+	DomainSets []DomainSet `json:"domain_sets,omitempty"`
+	Policies   []Policy    `json:"policies,omitempty"`
+
+	// Derived immutable data, rebuilt before an engine snapshot is published.
+	setMatchers map[string]*domainMatcher
+	fingerprint [32]byte
 }
 type Device struct {
 	ID       string `json:"id"`
@@ -36,18 +43,21 @@ type Device struct {
 	DelayMS  int    `json:"delay_ms"`
 	Probe    bool   `json:"probe"`
 	Upstream string `json:"upstream"`
+	Profile  string `json:"profile,omitempty"`
 }
 type Rule struct {
-	ID       string   `json:"id"`
-	Enabled  bool     `json:"enabled"`
-	Device   string   `json:"device"` // empty or * = global; otherwise device MAC
-	Domain   string   `json:"domain"` // exact, *.suffix (includes apex), or *
-	QType    string   `json:"qtype"`  // empty or * = all; A, AAAA, HTTPS, SVCB
-	Action   string   `json:"action"`
-	IPv4     []string `json:"ipv4"`
-	IPv6     []string `json:"ipv6"`
-	Upstream string   `json:"upstream"`
-	TTL      int      `json:"ttl"`
+	ID        string   `json:"id"`
+	Enabled   bool     `json:"enabled"`
+	Device    string   `json:"device"` // empty or * = global; otherwise device MAC
+	Domain    string   `json:"domain"` // exact, *.suffix (includes apex), or *
+	QType     string   `json:"qtype"`  // empty or * = all; A, AAAA, HTTPS, SVCB
+	Action    string   `json:"action"`
+	IPv4      []string `json:"ipv4"`
+	IPv6      []string `json:"ipv6"`
+	Upstream  string   `json:"upstream"`
+	TTL       int      `json:"ttl"`
+	Profile   string   `json:"profile,omitempty"`
+	DomainSet string   `json:"domain_set,omitempty"`
 }
 
 func DefaultConfig() Config {
@@ -106,7 +116,6 @@ func ValidDomain(s string) bool {
 		return true
 	}
 	s = strings.TrimPrefix(s, "*.")
-	s = strings.TrimSuffix(s, ".")
 	if len(s) == 0 || len(s) > 253 {
 		return false
 	}
@@ -195,9 +204,9 @@ func (c *Config) Validate() error {
 				return fmt.Errorf("rule %s refers to unknown device", r.ID)
 			}
 		}
-		r.Domain = strings.ToLower(strings.TrimSuffix(r.Domain, "."))
-		if !ValidDomain(r.Domain) {
-			return fmt.Errorf("invalid domain %q", r.Domain)
+		r.Domain = normalizeDomain(r.Domain)
+		if err := validSelector(r.Domain, r.DomainSet); err != nil {
+			return fmt.Errorf("rule %s: %w", r.ID, err)
 		}
 		switch r.QType {
 		case "", "*", "A", "AAAA", "HTTPS", "SVCB":
@@ -236,7 +245,7 @@ func (c *Config) Validate() error {
 			}
 		}
 	}
-	return nil
+	return c.validateProfiles()
 }
 
 // UCITokens reads UCI export syntax without invoking a shell or evaluating values.
@@ -398,6 +407,7 @@ func ParseUCI(text string) (Config, error) {
 			d.Mode = get("mode", d.Mode)
 			d.Prefer = get("prefer", d.Prefer)
 			d.Upstream = get("upstream", "")
+			d.Profile = get("profile", "")
 			d.Enabled, e = boolean("enabled", true)
 			if e != nil {
 				return c, e
@@ -416,7 +426,7 @@ func ParseUCI(text string) (Config, error) {
 			}
 			c.Devices = append(c.Devices, d)
 		case "rule":
-			r := Rule{ID: s.id, Device: get("device", "*"), Domain: get("domain", ""), QType: get("qtype", "*"), Action: get("action", "nxdomain"), Upstream: get("upstream", ""), IPv4: s.values["ipv4"], IPv6: s.values["ipv6"]}
+			r := Rule{Profile: get("profile", ""), DomainSet: get("domain_set", ""), ID: s.id, Device: get("device", "*"), Domain: get("domain", ""), QType: get("qtype", "*"), Action: get("action", "nxdomain"), Upstream: get("upstream", ""), IPv4: s.values["ipv4"], IPv6: s.values["ipv6"]}
 			r.Enabled, e = boolean("enabled", true)
 			if e != nil {
 				return c, e
@@ -426,6 +436,39 @@ func ParseUCI(text string) (Config, error) {
 				return c, e
 			}
 			c.Rules = append(c.Rules, r)
+		case "profile":
+			c.Profiles = append(c.Profiles, Profile{ID: s.id, Name: get("name", s.id), Description: get("description", "")})
+		case "domain_set":
+			c.DomainSets = append(c.DomainSets, DomainSet{ID: s.id, Name: get("name", s.id), Domains: s.values["domain"]})
+		case "policy":
+			p := Policy{ID: s.id, Profile: get("profile", ""), Domain: get("domain", ""), DomainSet: get("domain_set", ""), Mode: get("mode", "inherit"), Prefer: get("prefer", "")}
+			p.Enabled, e = boolean("enabled", true)
+			if e != nil {
+				return c, e
+			}
+			// Empty fields inherit. A literal zero/false is a real override.
+			if get("wait_ms", "") != "" {
+				v, err := num("wait_ms", 0)
+				if err != nil {
+					return c, fmt.Errorf("policy %s wait_ms: %w", s.id, err)
+				}
+				p.WaitMS = &v
+			}
+			if get("delay_ms", "") != "" {
+				v, err := num("delay_ms", 0)
+				if err != nil {
+					return c, fmt.Errorf("policy %s delay_ms: %w", s.id, err)
+				}
+				p.DelayMS = &v
+			}
+			if get("probe", "") != "" {
+				v, err := boolean("probe", false)
+				if err != nil {
+					return c, fmt.Errorf("policy %s probe: %w", s.id, err)
+				}
+				p.Probe = &v
+			}
+			c.Policies = append(c.Policies, p)
 		default:
 			return c, fmt.Errorf("unknown section type %q", s.kind)
 		}

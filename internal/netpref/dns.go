@@ -69,6 +69,41 @@ func nameAt(b []byte, off int) ([]string, int, error) {
 	}
 	return nil, 0, errors.New("too many compression pointers")
 }
+
+// Preserve DNS label boundaries and ASCII-only case equivalence. Literal dots,
+// whitespace and non-ASCII bytes inside a label must not alias ordinary names.
+func canonicalName(labels []string) string {
+	var out strings.Builder
+	for i, label := range labels {
+		if i > 0 {
+			out.WriteByte('.')
+		}
+		for j := 0; j < len(label); j++ {
+			b := label[j]
+			if b >= 'A' && b <= 'Z' {
+				b += 'a' - 'A'
+			}
+			if b >= 'a' && b <= 'z' || b >= '0' && b <= '9' || b == '-' || b == '_' {
+				out.WriteByte(b)
+			} else {
+				fmt.Fprintf(&out, "\\%03d", b)
+			}
+		}
+	}
+	return out.String()
+}
+
+// A probe changes only the query type/ID, not the original wire labels.
+func probeQuery(q Question, typ uint16) []byte {
+	var id [2]byte
+	_, _ = rand.Read(id[:])
+	q.ID = binary.BigEndian.Uint16(id[:])
+	q.Type = typ
+	b := questionWire(q)
+	put16(b, 2, 0x0100)
+	return b
+}
+
 func ParseQuestion(b []byte) (Question, error) {
 	q := Question{UDPLimit: 512}
 	if len(b) < 12 {
@@ -87,7 +122,7 @@ func ParseQuestion(b []byte) (Question, error) {
 		return q, io.ErrUnexpectedEOF
 	}
 	q.Labels = labs
-	q.Name = strings.ToLower(strings.Join(labs, "."))
+	q.Name = canonicalName(labs)
 	q.Type = u16(b, end)
 	q.Class = u16(b, end+2)
 	q.End = end + 4
@@ -266,7 +301,7 @@ func AddressEvidence(b []byte, q Question) (bool, time.Duration) {
 			return false, time.Second
 		}
 		if u16(b, end+2) == 1 {
-			rs = append(rs, rr{strings.ToLower(strings.Join(labs, ".")), u16(b, end), binary.BigEndian.Uint32(b[end+4 : end+8]), end + 10, n})
+			rs = append(rs, rr{canonicalName(labs), u16(b, end), binary.BigEndian.Uint32(b[end+4 : end+8]), end + 10, n})
 		}
 		pos = end + 10 + n
 	}
@@ -278,7 +313,7 @@ func AddressEvidence(b []byte, q Question) (bool, time.Duration) {
 			if r.typ == 5 && allowed[r.owner] {
 				labs, _, e := nameAt(b, r.start)
 				if e == nil {
-					target := strings.ToLower(strings.Join(labs, "."))
+					target := canonicalName(labs)
 					if !allowed[target] {
 						allowed[target] = true
 						changed = true

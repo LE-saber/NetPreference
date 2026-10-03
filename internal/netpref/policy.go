@@ -2,8 +2,11 @@ package netpref
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/json"
 	"fmt"
 	"net/netip"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -40,7 +43,8 @@ func domainScore(pattern, name string) int {
 	return -1
 }
 
-// Device-specific scope wins, then longest suffix/exactness; ties use UCI order.
+// Device scope wins, then matched domain specificity. Profile-scoped actions
+// win only a complete tie, then UCI order. Timing policies never compete here.
 func MatchRule(c *Config, d *Device, q Question) *Rule {
 	best := -1
 	var result *Rule
@@ -49,12 +53,19 @@ func MatchRule(c *Config, d *Device, q Question) *Rule {
 		if !r.Enabled || r.Device != "" && r.Device != "*" && r.Device != d.MAC {
 			continue
 		}
+		if r.Profile != "" && r.Profile != d.Profile {
+			continue
+		}
 		if r.QType != "" && r.QType != "*" && r.QType != qtypeName(q.Type) {
 			continue
 		}
-		s := domainScore(r.Domain, q.Name)
+		s, _ := selectorMatch(c, r.Domain, r.DomainSet, q.Name)
 		if s < 0 {
 			continue
+		}
+		s *= 2
+		if r.Profile != "" {
+			s++
 		}
 		if r.Device == d.MAC {
 			s += 10000
@@ -192,10 +203,66 @@ func NewEngine(c Config) *Engine {
 	e.SetConfig(c)
 	return e
 }
-func (e *Engine) SetConfig(c Config) { e.config.Store(&c) }
-func (e *Engine) Config() *Config    { return e.config.Load() }
-func (e *Engine) evidenceKey(d *Device, q Question, up string) string {
-	return fmt.Sprintf("%s|%s|%s|%d", d.MAC, up, q.Name, q.Type)
+
+// SetConfig takes ownership of a deep immutable snapshot, not the caller's
+// slice backing arrays or nullable policy fields. A stable content fingerprint
+// isolates evidence across profile/action/parameter changes, while the ordinary
+// 3-second manager heartbeat with identical configuration keeps its cache.
+func (e *Engine) SetConfig(c Config) {
+	c.Devices = slices.Clone(c.Devices)
+	c.Profiles = slices.Clone(c.Profiles)
+	c.DomainSets = slices.Clone(c.DomainSets)
+	for i := range c.DomainSets {
+		c.DomainSets[i].Domains = slices.Clone(c.DomainSets[i].Domains)
+	}
+	c.Rules = slices.Clone(c.Rules)
+	for i := range c.Rules {
+		c.Rules[i].IPv4 = slices.Clone(c.Rules[i].IPv4)
+		c.Rules[i].IPv6 = slices.Clone(c.Rules[i].IPv6)
+	}
+	c.Policies = slices.Clone(c.Policies)
+	for i := range c.Policies {
+		p := &c.Policies[i]
+		if p.WaitMS != nil {
+			v := *p.WaitMS
+			p.WaitMS = &v
+		}
+		if p.DelayMS != nil {
+			v := *p.DelayMS
+			p.DelayMS = &v
+		}
+		if p.Probe != nil {
+			v := *p.Probe
+			p.Probe = &v
+		}
+	}
+	c.Interfaces = slices.Clone(c.Interfaces)
+	// Config contains only JSON primitives/slices; marshaling cannot fail.
+	raw, _ := json.Marshal(c)
+	c.fingerprint = sha256.Sum256(raw)
+	if old := e.config.Load(); old != nil && old.fingerprint == c.fingerprint {
+		return
+	}
+	c.compileDomainSets()
+	e.config.Store(&c)
+}
+func (e *Engine) Config() *Config { return e.config.Load() }
+func (e *Engine) evidenceKey(c *Config, d *Device, q Question, up string) string {
+	return fmt.Sprintf("%x|%s|%s|%s|%d", c.fingerprint, d.MAC, up, q.Name, q.Type)
+}
+
+// Resolve each query type independently. An A-only resolver override must not
+// silently become the AAAA probe's resolver (and vice versa).
+func dnsRoute(c *Config, d *Device, q Question) (string, *Rule) {
+	up := c.Upstream
+	if d.Upstream != "" {
+		up = d.Upstream
+	}
+	r := MatchRule(c, d, q)
+	if r != nil && r.Upstream != "" {
+		up = r.Upstream
+	}
+	return up, r
 }
 func (e *Engine) upstream(ctx context.Context, raw []byte, up string, c *Config) ([]byte, error) {
 	call := func(s string) ([]byte, error) {
@@ -257,33 +324,28 @@ func (e *Engine) Handle(ctx context.Context, raw []byte, mac string) []byte {
 	if d.Mode == "block" {
 		return Reply(q, 5, nil, 0)
 	}
-	up := c.Upstream
-	if d.Upstream != "" {
-		up = d.Upstream
-	}
-	r := MatchRule(c, d, q)
+	up, r := dnsRoute(c, d, q)
 	if r != nil {
 		if b, local := LocalRule(q, r); local {
 			if q.Type == TypeA || q.Type == TypeAAAA {
 				positive, ttl := AddressEvidence(b, q)
-				e.cache.publish(e.evidenceKey(d, q, up), positive, ttl)
+				e.cache.publish(e.evidenceKey(c, d, q, up), positive, ttl)
 			}
 			return b
 		}
-		if r.Upstream != "" {
-			up = r.Upstream
-		}
 	}
-	prefer := d.Preferred()
-	delaying := (d.Mode == "ipv4" || d.Mode == "ipv6" || d.Mode == "custom") && (q.Type == 1 || q.Type == 28) && q.Type != prefer
+	policy := ResolvePreference(c, d, q.Name)
+	prefer := policy.Preferred()
+	delaying := policy.Delays(q.Type)
 	var obs *observation
 	started := time.Now()
 	if delaying {
 		pq := q
 		pq.Type = prefer
-		key := e.evidenceKey(d, pq, up)
+		pup, pr := dnsRoute(c, d, pq)
+		key := e.evidenceKey(c, d, pq, pup)
 		obs, _ = e.cache.watch(key)
-		if d.Probe && e.cache.beginProbe(obs) {
+		if policy.Probe && e.cache.beginProbe(obs) {
 			select {
 			case e.probes <- struct{}{}:
 				go func() {
@@ -291,19 +353,15 @@ func (e *Engine) Handle(ctx context.Context, raw []byte, mac string) []byte {
 					pctx, cancel := context.WithTimeout(context.Background(), time.Duration(c.TimeoutMS)*time.Millisecond)
 					defer cancel()
 					// Probes also obey the preferred-family domain policy; never bypass a block.
-					pr := MatchRule(c, d, pq)
 					var b []byte
 					var err error
-					pup := up
 					if pr != nil {
 						if local, ok := LocalRule(pq, pr); ok {
 							b = local
-						} else if pr.Upstream != "" {
-							pup = pr.Upstream
 						}
 					}
 					if b == nil {
-						b, err = e.upstream(pctx, MakeQuery(q.Name, prefer), pup, c)
+						b, err = e.upstream(pctx, probeQuery(q, prefer), pup, c)
 					}
 					if err == nil {
 						actual, er := ParseQuestion(b)
@@ -327,13 +385,13 @@ func (e *Engine) Handle(ctx context.Context, raw []byte, mac string) []byte {
 	}
 	if q.Type == 1 || q.Type == 28 {
 		positive, ttl := AddressEvidence(b, q)
-		e.cache.publish(e.evidenceKey(d, q, up), positive, ttl)
+		e.cache.publish(e.evidenceKey(c, d, q, up), positive, ttl)
 	}
 	positiveAnswer, _ := AddressEvidence(b, q)
 	if delaying && positiveAnswer {
 		// A is measured from arrival, not after upstream latency. B is applied only
 		// after positive preferred-family evidence. A+B is globally bounded at 1s.
-		remaining := time.Until(started.Add(time.Duration(d.WaitMS) * time.Millisecond))
+		remaining := time.Until(started.Add(time.Duration(policy.WaitMS) * time.Millisecond))
 		if remaining > 0 {
 			timer := time.NewTimer(remaining)
 			select {
@@ -348,9 +406,9 @@ func (e *Engine) Handle(ctx context.Context, raw []byte, mac string) []byte {
 				}
 			}
 		}
-		if e.cache.positive(obs) && d.DelayMS > 0 {
-			until := time.Now().Add(time.Duration(d.DelayMS) * time.Millisecond)
-			cap := started.Add(time.Duration(d.WaitMS+d.DelayMS) * time.Millisecond)
+		if e.cache.positive(obs) && policy.DelayMS > 0 {
+			until := time.Now().Add(time.Duration(policy.DelayMS) * time.Millisecond)
+			cap := started.Add(time.Duration(policy.WaitMS+policy.DelayMS) * time.Millisecond)
 			if until.After(cap) {
 				until = cap
 			}

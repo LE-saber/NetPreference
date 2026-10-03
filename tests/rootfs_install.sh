@@ -16,7 +16,13 @@ mkdir root
 tar -xzf "$IMAGE" -C root
 mkdir -p root/tmp root/dev root/var/lock
 [ -e root/dev/null ] || mknod root/dev/null c 1 3
-PACKAGE=$(find "$ROOT/dist" -maxdepth 1 -name '*.ipk' -print -quit)
+VERSION=$(sed -n 's/^PKG_VERSION:=//p' "$ROOT/openwrt/luci-app-netpreference/Makefile")
+REV=$(sed -n 's/^PKG_RELEASE:=//p' "$ROOT/openwrt/luci-app-netpreference/Makefile")
+PACKAGE=${NETPREFERENCE_IPK:-"$ROOT/dist/luci-app-netpreference_${VERSION}-r${REV}_x86_64.ipk"}
+LEGACY=${NETPREFERENCE_LEGACY_IPK:-"$ROOT/dist-legacy/luci-app-netpreference_0.1.0-r6_x86_64.ipk"}
+test -s "$PACKAGE"
+test -s "$LEGACY"
+cp "$LEGACY" root/tmp/legacy.ipk
 cp "$PACKAGE" root/tmp/netpreference.ipk
 # The minimal target rootfs omits a few runtime tools that are present on the
 # real target router. opkg filters a local package candidate before force-depends
@@ -38,6 +44,7 @@ EOF
  fi
 done
 chroot root /bin/opkg print-architecture
+# New installation is idle and removable.
 IPKG_INSTROOT=/ chroot root /bin/opkg install /tmp/netpreference.ipk
 chroot root /usr/sbin/netpreference version
 IPKG_INSTROOT=/ chroot root /bin/opkg status luci-app-netpreference
@@ -46,4 +53,18 @@ test -x root/usr/libexec/rpcd/netpreference
 test -s root/usr/share/rpcd/acl.d/luci-app-netpreference.json
 IPKG_INSTROOT=/ chroot root /bin/opkg remove luci-app-netpreference
 test ! -e root/usr/sbin/netpreference
-printf '%s\n' 'PASS: ImmortalWrt 24.10.4 rootfs opkg install/version/remove. Offline scripts skipped by design; no target-kernel or LuCI browser claim.'
+# Install the true r6 binary, persist a real legacy config, then perform an ordinary upgrade.
+IPKG_INSTROOT=/ chroot root /bin/opkg install /tmp/legacy.ipk
+test "$(chroot root /usr/sbin/netpreference version)" = 0.1.0
+cp "$ROOT/tests/fixtures/legacy-r6.uci" root/etc/config/netpreference
+before=$(sha256sum root/etc/config/netpreference | cut -d ' ' -f 1)
+IPKG_INSTROOT=/ chroot root /bin/opkg install /tmp/netpreference.ipk
+test "$(chroot root /usr/sbin/netpreference version)" = "$VERSION"
+test "$(sha256sum root/etc/config/netpreference | cut -d ' ' -f 1)" = "$before"
+IPKG_INSTROOT=/ chroot root /bin/opkg status luci-app-netpreference | grep -F "Version: ${VERSION}-r${REV}"
+test -s root/www/luci-static/resources/view/netpreference/advanced.js
+IPKG_INSTROOT=/ chroot root /bin/opkg remove luci-app-netpreference
+test ! -e root/usr/sbin/netpreference
+# opkg must retain the user-modified conffile rather than erase it on remove.
+test "$(sha256sum root/etc/config/netpreference | cut -d ' ' -f 1)" = "$before"
+printf '%s\n' 'PASS: ImmortalWrt 24.10.4 opkg new install, remove, actual r6 -> current upgrade, byte-identical legacy config, and modified-conffile retention. Offline package hooks skipped; runtime lifecycle is exercised in the isolated kernel lab.'

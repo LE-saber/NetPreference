@@ -406,7 +406,7 @@ func ListenControl(path string, m *Manager) (*ControlServer, error) {
 			var c Config
 			c, err = LoadConfig(r.Context(), m.Runner)
 			if err == nil {
-				result = map[string]any{"valid": true, "devices": len(c.Devices), "rules": len(c.Rules)}
+				result = map[string]any{"valid": true, "devices": len(c.Devices), "rules": len(c.Rules), "profiles": len(c.Profiles), "domain_sets": len(c.DomainSets), "policies": len(c.Policies)}
 			}
 		default:
 			w.WriteHeader(404)

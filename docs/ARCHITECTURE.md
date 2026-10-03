@@ -135,13 +135,11 @@ not negative or imaginary rates. Only routed traffic is counted, not LAN-to-LAN
 bridged traffic or all traffic to the router itself. Flow/hardware offload can
 bypass these counters; offload is never changed automatically.
 
-Cumulative totals read `nlbw -c json -g mac,family`, summing rx_bytes as download
-and tx_bytes as upload. Totals refer to nlbwmon's **active accounting period**, not
-lifetime totals, and are limited by its existing collection/configuration. No
-`nlbw commit`, reset, enable, disable or package removal is done. When monitoring
-is off, this plugin performs no nlbw sampling and installs no traffic counters;
-normal DNS/neighbor/watchdog functions remain. Missing nlbwmon shows unavailable
-totals rather than invented zero coverage. IPv6 share uses these period totals.
+Cumulative totals integrate positive deltas from NetPreference's own nft counters,
+separately for IPv4/IPv6 and each direction. They are diagnostic session totals,
+not lifetime/billing counters. Disabling monitoring, service restart or counter
+rebuild resets the session. nlbwmon is neither read nor configured by r6/0.2.0;
+its pre-existing service/database remains independent. Flow offload may undercount.
 
 ## 6. Verification and primary references
 
@@ -159,3 +157,36 @@ integrated core, tests and UI, with tools performing actual builds/execution.
 - LuCI scoped save vs global apply: https://github.com/openwrt/luci/blob/openwrt-24.10/modules/luci-base/htdocs/luci-static/resources/uci.js
 - OpenWrt IPK archive layout: https://github.com/openwrt/openwrt/blob/openwrt-24.10/scripts/ipkg-build
 - OpenWrt Go packaging: https://github.com/openwrt/packages/blob/openwrt-24.10/lang/golang/golang-package.mk
+
+## 7. Named profiles and domain sets (0.2.0)
+
+`device.profile` optionally selects a named profile. A profile owns timing
+`policy` sections and may scope existing DNS `rule` sections. It does not own a
+device's baseline or replace device mode/A/B. Missing/unmatched profile policies
+leave defaults intact. Sets are flat named lists, globally reusable by profiles.
+References are UCI section IDs, not mutable display names. UI profile/set sections
+are named (not anonymous) so saving does not remap their IDs.
+
+Timing selection: choose the highest matching pattern specificity; an exact name
+beats its same-length suffix, longer matches beat shorter ones, ties keep UCI
+order. A set is scored by its best matching member, not set size or declaration
+order. Only the winning policy applies; nil A/B/probe inherits from the device,
+while explicit zero/false is retained. All effective device combinations are
+validated before network modification. No recursive set/profile inheritance.
+
+DNS actions remain a separate pass: whole-device block first, then device scope,
+pattern specificity, profile scope only on a complete tie, then UCI order. Timing
+policies cannot override blocks. Explicit profile DNS actions can intentionally
+change content according to this ordering. Local replies remain immediate.
+
+A/AAAA queries and probes each resolve their own action and upstream. An A-only
+upstream override is not reused for AAAA probes. Engine snapshots own deep copies
+of all slices/pointers. Evidence keys include the full immutable configuration
+fingerprint; late probes from other profiles/configurations cannot leak evidence
+across a switch. Equal manager heartbeat snapshots retain their cache. DNS TTL
+and address existence still do not prove network reachability.
+
+Caps: 64 profiles, 128 sets, 256 patterns/set, 4096 total set patterns and 512
+timing policies. Sets compile into exact/suffix indexes; lookup is bounded by DNS
+label count. Unknown references, ambiguous selectors and invalid inherited timing
+are rejected, rather than silently falling back to a guessed advanced policy.

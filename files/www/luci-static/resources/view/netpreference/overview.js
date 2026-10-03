@@ -91,11 +91,16 @@ return view.extend({
    o.value(h.mac, (h.name || h.mac) + (ips ? ' · ' + ips : ''));
   });
 
-  o = d.option(form.ListValue, 'mode', '策略模式'); o.default = 'dual'; o.rmempty = false;
+  o = d.option(form.ListValue, 'mode', '设备默认策略'); o.default = 'dual'; o.rmempty = false;
   [['dual', '普通双栈'], ['ipv6', 'IPv6 优先'], ['ipv4', 'IPv4 优先'], ['custom', '自定义偏好'], ['block', '阻断 DNS（REFUSED）']].forEach(function(v) { o.value(v[0], v[1]); });
 
+  o = d.option(form.ListValue, 'profile', '高级模式 / Profile');
+  o.value('', '不使用高级模式'); o.rmempty = true;
+  o.description = '仅匹配域名覆盖上面的设备默认策略。未匹配域名仍使用本设备的模式与 A/B。在“高级模式与域名集”页面创建和保存模式。';
+  uci.sections('netpreference', 'profile', function(s) { o.value(s['.name'], (s.name || s['.name']) + ' [' + s['.name'] + ']'); });
+
   o = d.option(form.ListValue, 'prefer', '自定义优先协议族');
-  o.value('ipv6', 'IPv6'); o.value('ipv4', 'IPv4'); o.default = 'ipv6'; o.depends('mode', 'custom'); o.modalonly = true;
+  o.value('ipv6', 'IPv6'); o.value('ipv4', 'IPv4'); o.default = 'ipv6'; o.depends('mode', 'custom'); o.modalonly = true; o.retain = true;
 
   o = d.option(form.ListValue, '_preset', '偏好强度预设'); o.modalonly = true;
   o.value('soft', '温和：A=75 ms，B=40 ms');
@@ -132,26 +137,6 @@ return view.extend({
   o = d.option(form.Value, 'upstream', '设备专用上游 DNS'); o.modalonly = true;
   o.placeholder = '127.0.0.1:53';
   o.description = '可选。传输失败、SERVFAIL 或 REFUSED 时会回退到原始 DNS 链。';
-
-  var r = m.section(form.GridSection, 'rule', '域名规则');
-  r.addremove = true; r.anonymous = true; r.sortable = true;
-  r.description = '“全部已加入设备”只作用于 NetPreference 管理的设备。设备级规则优先于全局规则；随后按最长域名/精确匹配决定，仍相同时按列表顺序。*.example.com 包含根域 example.com。';
-  o = r.option(form.Flag, 'enabled', '启用'); o.default = '1'; o.rmempty = false;
-  o = r.option(form.Value, 'device', '作用范围（MAC 或 *）'); o.default = '*'; o.rmempty = false;
-  o.value('*', '全部已加入设备');
-  uci.sections('netpreference', 'device', function(s) { if (s.mac) o.value(s.mac, s.name || s.mac); });
-
-  o = r.option(form.Value, 'domain', '域名'); o.placeholder = '*.example.com'; o.rmempty = false;
-  o = r.option(form.ListValue, 'qtype', '查询类型'); o.default = '*'; o.rmempty = false;
-  ['*', 'A', 'AAAA', 'HTTPS', 'SVCB'].forEach(function(v) { o.value(v); });
-
-  o = r.option(form.ListValue, 'action', '动作'); o.default = 'nxdomain'; o.rmempty = false;
-  [['forward', '转发 / 指定上游'], ['rewrite', '静态地址重写'], ['nxdomain', '返回 NXDOMAIN'], ['nodata', '返回 NODATA'], ['refused', '返回 REFUSED'], ['sinkhole', '黑洞到 0.0.0.0 / ::'], ['ipv4_only', '仅 IPv4：AAAA 返回 NODATA'], ['ipv6_only', '仅 IPv6：A 返回 NODATA']].forEach(function(v) { o.value(v[0], v[1]); });
-
-  o = r.option(form.DynamicList, 'ipv4', '静态 IPv4 地址'); o.datatype = 'ip4addr'; o.depends('action', 'rewrite'); o.modalonly = true;
-  o = r.option(form.DynamicList, 'ipv6', '静态 IPv6 地址'); o.datatype = 'ip6addr'; o.depends('action', 'rewrite'); o.modalonly = true;
-  o = r.option(form.Value, 'upstream', '规则专用上游 DNS'); o.depends('action', 'forward'); o.modalonly = true;
-  o = r.option(form.Value, 'ttl', '覆盖 TTL（秒）'); o.datatype = 'range(0,86400)'; o.default = '60'; o.rmempty = false; o.modalonly = true;
 
   this.statusBox = E('div', { 'class': 'cbi-section', 'style': 'margin-bottom:1em;' }, '正在读取运行状态…');
   this.trafficBox = E('div', { 'class': 'cbi-section' });

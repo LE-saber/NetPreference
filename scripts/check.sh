@@ -8,8 +8,10 @@ go test -race -coverprofile=dist/coverage.out -v ./... | tee dist/logs/go-tests.
 go vet ./... 2>&1 | tee dist/logs/go-vet.txt
 go test ./internal/netpref -run '^$' -fuzz '^FuzzDNSWire$' -fuzztime=3s -parallel=1 | tee dist/logs/fuzz-dns.txt
 go test ./internal/netpref -run '^$' -fuzz '^FuzzUCITokens$' -fuzztime=3s -parallel=1 | tee dist/logs/fuzz-uci.txt
+go test ./internal/netpref -run '^$' -fuzz '^FuzzDomainSetMatchesLinearReference$' -fuzztime=3s -parallel=1 | tee dist/logs/fuzz-domains.txt
 python3 scripts/build_ipk.py | tee dist/logs/build.txt
 python3 tests/test_package.py 2>&1 | tee dist/logs/package.txt
+python3 tests/test_workflows.py 2>&1 | tee dist/logs/workflows.txt
 node tests/luci_contract.js | tee dist/logs/luci-contract.txt
 python3 -m py_compile tests/*.py scripts/*.py
 for script in files/etc/init.d/netpreference files/usr/libexec/rpcd/netpreference packaging/*; do sh -n "$script"; done

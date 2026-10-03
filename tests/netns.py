@@ -73,11 +73,35 @@ printf '%s\\n' '{"columns":["family","mac","rx_bytes","tx_bytes"],"data":[[4,"02
 config device 'selected'
  option enabled '1'
  option name 'selected'
+ option profile 'work'
  option mac '02:00:00:00:00:01'
  option mode 'ipv6'
  option wait_ms '120'
  option delay_ms '100'
  option probe '1'
+config profile 'work'
+ option name 'Work'
+config profile 'travel'
+ option name 'Travel'
+config domain_set 'v4_domains'
+ option name 'V4 domains'
+ list domain '*.v4.test'
+config policy 'v4_override'
+ option profile 'work'
+ option domain_set 'v4_domains'
+ option mode 'ipv4'
+ option wait_ms '90'
+ option delay_ms '180'
+config policy 'short_override'
+ option profile 'work'
+ option domain 'fast.test'
+ option mode 'ipv6'
+ option wait_ms '90'
+ option delay_ms '45'
+config policy 'travel_dual'
+ option profile 'travel'
+ option domain '*'
+ option mode 'dual'
 config rule 'static'
  option device '*'
  option domain 'rewrite.test'
@@ -194,6 +218,29 @@ config rule 'custom'
         expect(first,'192.0.2.1',1,'x.blocked.test',rcode=3)
         expect(second,'192.0.2.1',1,'x.blocked.test','198.51.100.7')
         r=expect(first,'192.0.2.1',1,'preference.test','198.51.100.7');assert r['elapsed']>=0.07,r
+        # Domain sets and domain-specific A/B apply on both DNS transports and IP families.
+        for host in ('192.0.2.1','fd42:1::1'):
+            for proto in ('udp','tcp'):
+                r=expect(first,host,28,'deep.v4.test','2001:db8::7',proto=proto)
+                assert 0.15 <= r['elapsed'] < 1.5,r
+                r=expect(first,host,1,'fast.test','198.51.100.7',proto=proto)
+                assert 0.03 <= r['elapsed'] < 1.5,r
+        # Reject bad references without losing the active policy or touching shared NAT66.
+        p=base/'config';saved=p.read_text()
+        p.write_text(saved.replace("option profile 'work'","option profile 'missing'",1))
+        failed=subprocess.run(['ip','netns','exec',router,str(BINARY),'reload'],env=env,text=True,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+        assert failed.returncode != 0,failed.stdout
+        rejected=json.loads(failed.stdout);assert not rejected.get('ok',True),rejected
+        assert ctl('status')['active']
+        r=expect(first,'192.0.2.1',28,'deep.v4.test','2001:db8::7');assert r['elapsed']>=0.15,r
+        p.write_text(saved.replace("option profile 'work'","option profile 'travel'",1))
+        assert ctl('reload')['ok']
+        delays=ctl('status')['delayed']
+        expect(first,'192.0.2.1',28,'deep.v4.test','2001:db8::7')
+        assert ctl('status')['delayed']==delays,'old profile remained after switch'
+        expect(first,'192.0.2.1',1,'x.blocked.test',rcode=3)
+        p.write_text(saved);assert ctl('reload')['ok']
+        assert ns(router,'nft','-j','list','table','inet','fw4')==before
         expect(first,'192.0.2.1',1,'fallback.test','198.51.100.7')
         expect(first,'192.0.2.1',1,'rewrite.test','203.0.113.77',port=42053)
         # A successful restore also cleans the already cached UDP DNAT tuple.
@@ -218,7 +265,7 @@ config rule 'custom'
         expect(first,'192.0.2.1',1,'rewrite.test','198.51.100.7',port=42054)
         expect(first,'fd42:1::1',28,'rewrite.test','2001:db8::7')
         assert ns(router,'nft','-j','list','table','inet','fw4')==before
-        print('PASS: real IPv4/IPv6 UDP/TCP per-device redirect, timing, rules, custom fallback, own-table restore, identical-tuple conntrack recovery, SIGKILL watchdog, forwarded counters and NAT66 preservation.',flush=True)
+        print('PASS: real IPv4/IPv6 UDP/TCP per-device redirect, domain profiles/A-B/switch/invalid-reference rollback, timing, rules, custom fallback, own-table restore, identical-tuple conntrack recovery, SIGKILL watchdog, forwarded counters and NAT66 preservation.',flush=True)
         print('LIMIT: UCI/nlbw are fixtures; host kernel is not the target ImmortalWrt kernel; LuCI/procd target acceptance is separate.',flush=True)
     finally:
         for proc in reversed(processes):

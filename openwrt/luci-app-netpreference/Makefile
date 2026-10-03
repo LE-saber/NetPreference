@@ -1,8 +1,8 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=luci-app-netpreference
-PKG_VERSION:=0.1.0
-PKG_RELEASE:=6
+PKG_VERSION:=0.2.0
+PKG_RELEASE:=1
 PKG_LICENSE:=MIT
 PKG_MAINTAINER:=LE-saber
 PKG_BUILD_DEPENDS:=golang/host
@@ -43,6 +43,7 @@ define Package/luci-app-netpreference/install
 	chmod 0755 $(1)/etc/init.d/netpreference $(1)/usr/libexec/rpcd/netpreference
 	$(INSTALL_DIR) $(1)/usr/share/netpreference
 	$(INSTALL_DATA) $(NETPREFERENCE_SRC)/LICENSE $(1)/usr/share/netpreference/LICENSE
+	$(INSTALL_DATA) $(NETPREFERENCE_SRC)/docs/LICENSE-Go $(1)/usr/share/netpreference/LICENSE-Go
 endef
 
 define Package/luci-app-netpreference/postinst
