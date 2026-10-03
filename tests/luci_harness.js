@@ -33,7 +33,13 @@
    add(p,type,name){if(!name)throw new Error('Library must create stable named sections');sections[name]={'.name':name,'.type':type};return name;},
    set(p,s,k,v){if(v==null||v==='')delete sections[s][k];else sections[s][k]=v;},
    remove(p,s){delete sections[s];},
-   move(p,s,target){const row=sections[s];if(!row)return false;delete sections[s];sections[s]=row;return true;},
+   move(p,s,target,after){
+    const row=sections[s];if(!row||target!=null&&!sections[target])return false;
+    const entries=Object.entries(sections).filter(function(e){return e[0]!==s;});
+    let at=entries.length;
+    if(target!=null){at=entries.findIndex(function(e){return e[0]===target;});if(at<0)return false;if(after)at++;}
+    entries.splice(at,0,[s,row]);sections=Object.fromEntries(entries);return true;
+   },
    async save(){calls.push(['uci','save']);}
   };
   class Option{
