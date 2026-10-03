@@ -259,9 +259,22 @@ config rule 'custom'
         assert ns(router,'nft','-j','list','table','inet','fw4')==before
         # SIGKILL cannot run defer/stop handlers: separate watchdog must recover.
         expect(first,'192.0.2.1',1,'rewrite.test','203.0.113.77',port=42054)
+        def stale_dns_mapping():
+            return ns(router,'conntrack','-L','-f','ipv4','-p','udp',
+                      '-s','192.0.2.2','--sport','42054','--dport','53',
+                      '--reply-src','192.0.2.1','--reply-port-src','1053').strip()
+        assert stale_dns_mapping(),'the SIGKILL fixture must have a cached DNAT tuple'
+        killed_at=time.monotonic()
         daemon.kill();daemon.wait(timeout=5)
-        def removed():return 'netpreference' not in ns(router,'nft','list','tables')
-        wait_for(removed,15)
+        # Removing the nft table and clearing old conntrack are separate kernel
+        # operations. Observe both, with the original deadline, before making
+        # one strict DNS query on the SAME old port. Never retry that query to
+        # hide a failure, and never treat table removal alone as completion.
+        def recovered():
+            if 'netpreference' in ns(router,'nft','list','tables'):return False
+            return not stale_dns_mapping()
+        wait_for(recovered,15)
+        print('RECOVERY nft and cached DNAT cleared in',time.monotonic()-killed_at,'seconds',flush=True)
         expect(first,'192.0.2.1',1,'rewrite.test','198.51.100.7',port=42054)
         expect(first,'fd42:1::1',28,'rewrite.test','2001:db8::7')
         assert ns(router,'nft','-j','list','table','inet','fw4')==before
