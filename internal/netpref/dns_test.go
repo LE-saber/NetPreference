@@ -15,11 +15,7 @@ import (
 // fixtureUpstream uses real UDP and TCP sockets; tests do not use public DNS.
 func fixtureUpstream(t *testing.T, fn func([]byte, string) []byte) string {
 	t.Helper()
-	u, e := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
-	if e != nil {
-		t.Fatal(e)
-	}
-	tcp, e := net.Listen("tcp4", u.LocalAddr().String())
+	u, tcp, e := listenFixtureUpstream()
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -186,7 +182,7 @@ func TestActualUDPAndTCPService(t *testing.T) {
 	c := testConfig()
 	c.Upstream = up
 	e := NewEngine(c)
-	s, err := ListenDNS("127.0.0.1:0", e, func(net.IP) string { return testMAC })
+	s, err := listenFixtureDNS("127.0.0.1:0", e, func(net.IP) string { return testMAC })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -209,7 +205,7 @@ func TestTCPPipeliningPreferredFirst(t *testing.T) {
 	c.Devices[0].DelayMS = 100
 	c.Devices[0].Probe = false
 	e := NewEngine(c)
-	s, err := ListenDNS("127.0.0.1:0", e, func(net.IP) string { return testMAC })
+	s, err := listenFixtureDNS("127.0.0.1:0", e, func(net.IP) string { return testMAC })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -249,7 +245,7 @@ func TestTCPPipeliningPreferredFirst(t *testing.T) {
 }
 func TestServiceStopsIdleTCP(t *testing.T) {
 	e := NewEngine(testConfig())
-	s, err := ListenDNS("127.0.0.1:0", e, func(net.IP) string { return testMAC })
+	s, err := listenFixtureDNS("127.0.0.1:0", e, func(net.IP) string { return testMAC })
 	if err != nil {
 		t.Fatal(err)
 	}

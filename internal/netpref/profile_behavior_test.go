@@ -15,7 +15,7 @@ func wireEngine(t *testing.T, c Config) (*Engine, string) {
 		t.Fatal(err)
 	}
 	e := NewEngine(c)
-	s, err := ListenDNS("127.0.0.1:0", e, func(net.IP) string { return testMAC })
+	s, err := listenFixtureDNS("127.0.0.1:0", e, func(net.IP) string { return testMAC })
 	if err != nil {
 		t.Fatal(err)
 	}
