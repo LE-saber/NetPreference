@@ -35,17 +35,17 @@ const lib=new Function('baseclass',fs.readFileSync(path.join(project,'files/www/
  let other=lib.newRow(uci,m,p);other.kind='set';other.domain_set=s.id;
  lib.stage(uci,m);uci.set('netpreference','pc','profile',p.id);
  let pre=lib.serialize(uci);assert(pre.includes('*.youtube.com'));
- await uci.save();
+ await uci.save();lib.order(uci,m);await uci.save();
  assert(db[s.id]&&db[p.id]&&db[id],'named references changed on save');
  assert.equal(db[id].wait_ms,'0');assert.equal(db[id].probe,'0');
  // Old domain deletion must disappear from both preflight text and native UCI.
  m=lib.load(uci);p=m.profiles[0];s=m.sets[0];p.rows[0].kind='set';p.rows[0].domain_set=s.id;
  p.rows.reverse();lib.stage(uci,m);pre=lib.serialize(uci);
  assert(!pre.includes('youtube.com'),'deleted selector leaked into validation');
- await uci.save();assert.equal(db[id].domain,undefined);assert.equal(db[id].domain_set,s.id);
+ await uci.save();lib.order(uci,m);await uci.save();assert.equal(db[id].domain,undefined);assert.equal(db[id].domain_set,s.id);
  let rows=uci.sections('netpreference','policy');assert.equal(rows[0]['.name'],other.id);
  // Remove one rule and rename the set without renaming its stable reference.
- m=lib.load(uci);m.profiles[0].rows.pop();m.sets[0].name='Renamed';lib.stage(uci,m);await uci.save();
+ m=lib.load(uci);m.profiles[0].rows.pop();m.sets[0].name='Renamed';lib.stage(uci,m);await uci.save();lib.order(uci,m);await uci.save();
  assert(!db[id]);assert.equal(db[other.id].domain_set,s.id);
  const text=lib.serialize(uci);
  fs.mkdirSync(path.join(root,'tmp/np-ui-config'),{recursive:true});

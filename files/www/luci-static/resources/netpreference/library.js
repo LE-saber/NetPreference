@@ -75,6 +75,18 @@ function nameCheck(items, label) {
   names[key] = true;
  });
 }
+function order(uci,m) {
+ // LuCI 25.300 intentionally skips reorderSections() while any delete is
+ // pending. Selector changes (domain -> domain_set) create such deletes, so
+ // persist content first, reload, then run this ordering pass separately.
+ // Anchor each row before its successor; DNS action order remains untouched.
+ m.profiles.forEach(function(p) {
+  for (var i=p.rows.length-2;i>=0;i--) {
+   if(!uci.move(config,p.rows[i].id,p.rows[i+1].id,false))
+    throw new Error('无法保存模式集规则顺序');
+  }
+ });
+}
 function stage(uci,m) {
  nameCheck(m.sets,'域名集');nameCheck(m.profiles,'模式集');
  if (m.sets.length>128 || m.profiles.length>64) throw new Error('域名集或模式集数量超出限制');
@@ -104,17 +116,7 @@ function stage(uci,m) {
   if(!uci.get(config,op[0]))uci.add(config,op[1],op[0]);
   Object.keys(op[2]).forEach(function(k){uci.set(config,op[0],k,op[2][k]===''?null:op[2][k]);});
  });
- // Only the relative order of policy rows changes; DNS actions keep their own
- // order. Anchor each row before its successor instead of repeatedly moving
- // rows to the end of the whole UCI package. The latter is ambiguous across
- // real LuCI uci.js save/reload cycles because profiles, sets and DNS actions
- // share the same section order.
- m.profiles.forEach(function(p) {
-  for (var i=p.rows.length-2;i>=0;i--) {
-   if(!uci.move(config,p.rows[i].id,p.rows[i+1].id,false))
-    throw new Error('无法保存模式集规则顺序');
-  }
- });
+ // Policy ordering is persisted after this first save/reload. See order().
  // A rejected preflight leaves only local UCI changes. Remember these IDs so
  // removing a newly added item before retry also removes its staged section.
  m.original = Array.from(new Set(m.original.concat(Object.keys(keep))));
@@ -137,4 +139,4 @@ function serialize(uci) {
  });
  return lines.join('\n')+'\n';
 }
-return baseclass.extend({domain:domain,domains:domains,display:display,load:load,newSet:newSet,newProfile:newProfile,newRow:newRow,stage:stage,serialize:serialize});
+return baseclass.extend({domain:domain,domains:domains,display:display,load:load,newSet:newSet,newProfile:newProfile,newRow:newRow,stage:stage,order:order,serialize:serialize});

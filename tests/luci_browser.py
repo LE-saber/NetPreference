@@ -76,7 +76,7 @@ with sync_playwright() as pw:
     r.get_by_label('\u504f\u597d\u6a21\u5f0f').select_option('dual')
     page.evaluate('async()=>{h.calls.length=0;await app.handleSaveApply()}')
     assert page.evaluate('h.notices.filter(x=>x[0]==="error").length') == 0
-    assert page.evaluate('h.calls.map(c=>c[1])') == ['save', 'check_config', 'save', 'commit', 'apply']
+    assert page.evaluate('h.calls.map(c=>c[1])') == ['save', 'check_config', 'save', 'save', 'commit', 'apply']
     assert page.evaluate('app.model.profiles[0].rows.length') == 4
     assert page.evaluate('app.model.profiles[0].rows[2].wait_ms') == '0'
     assert page.evaluate('app.model.sets[0].original') == ['*.openai.com', '*.anthropic.com', '*.claude.ai']

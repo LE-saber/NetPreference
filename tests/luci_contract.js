@@ -41,7 +41,7 @@ function methods(){return h.calls.map(c=>c[1]);}
  const originalRule=JSON.stringify(h.sections.block);
  // Round-trip old r1 records without silently broadening exact patterns.
  h.calls.length=0;await advanced.handleSave();
- assert.deepEqual(methods(),['save','check_config','save','commit']);
+ assert.deepEqual(methods(),['save','check_config','save','save','commit']);
  assert.deepEqual(h.sections.media.domain,['*.media.test','exact.test']);
  assert.equal(h.sections.work.description,'Retain this note');
  assert.equal(h.sections.bias.wait_ms,'0');assert.equal(h.sections.bias.probe,'0');
@@ -55,7 +55,7 @@ function methods(){return h.calls.map(c=>c[1]);}
  row=lib.newRow(h.uci,model,profile);row.input='example.com';row.mode='dual';
  h.uci.set('netpreference','pc','profile',profile.id);
  h.calls.length=0;await advanced.handleSaveApply();
- assert.deepEqual(methods(),['save','check_config','save','commit','apply']);
+ assert.deepEqual(methods(),['save','check_config','save','save','commit','apply']);
  assert.deepEqual(h.sections[set.id].domain,['*.openai.com','*.anthropic.com','*.claude.ai']);
  const config=lib.serialize(h.uci);
  fs.mkdirSync(path.join(ROOT,'dist'),{recursive:true});fs.writeFileSync(path.join(ROOT,'dist/ux-generated.uci'),config);

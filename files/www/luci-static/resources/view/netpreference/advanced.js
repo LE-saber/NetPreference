@@ -181,6 +181,11 @@ return view.extend({
   return this.map.save(function(){
    library.stage(uci,self.model);
    return callCheck(library.serialize(uci)).then(checked);
+  }).then(function(){
+   // Target LuCI skips reordering when selector deletions are part of the same
+   // save. After the first save reloads UCI, persist only the desired row order.
+   library.order(uci,self.model);
+   return uci.save();
   }).then(function(){return callCommit('netpreference');}).then(function(code){
    if(typeof code==='number'&&code!==0)throw new Error('UCI commit failed: '+code);
    self.model=library.load(uci);self.redraw();
