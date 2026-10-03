@@ -105,8 +105,16 @@ function stage(uci,m) {
   Object.keys(op[2]).forEach(function(k){uci.set(config,op[0],k,op[2][k]===''?null:op[2][k]);});
  });
  // Only the relative order of policy rows changes; DNS actions keep their own
- // order. A row never acquires a user-visible name.
- m.profiles.forEach(function(p){p.rows.forEach(function(r){uci.move(config,r.id,null);});});
+ // order. Anchor each row before its successor instead of repeatedly moving
+ // rows to the end of the whole UCI package. The latter is ambiguous across
+ // real LuCI uci.js save/reload cycles because profiles, sets and DNS actions
+ // share the same section order.
+ m.profiles.forEach(function(p) {
+  for (var i=p.rows.length-2;i>=0;i--) {
+   if(!uci.move(config,p.rows[i].id,p.rows[i+1].id,false))
+    throw new Error('无法保存模式集规则顺序');
+  }
+ });
  // A rejected preflight leaves only local UCI changes. Remember these IDs so
  // removing a newly added item before retry also removes its staged section.
  m.original = Array.from(new Set(m.original.concat(Object.keys(keep))));
