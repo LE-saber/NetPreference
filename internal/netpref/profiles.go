@@ -105,7 +105,12 @@ func normalizeDomain(s string) string {
 
 // Query labels are wire data: unlike configuration input, whitespace is not padding.
 func normalizeQueryName(s string) string {
-	b := []byte(strings.TrimSuffix(s, "."))
+	// Removing one dot repeatedly would turn invalid "name.." into "name".
+	// A selector and its compiled set may both normalize; keep this idempotent.
+	if strings.HasSuffix(s, ".") && !strings.HasSuffix(s, "..") {
+		s = strings.TrimSuffix(s, ".")
+	}
+	b := []byte(s)
 	for i := range b {
 		if b[i] >= 'A' && b[i] <= 'Z' {
 			b[i] += 'a' - 'A'
