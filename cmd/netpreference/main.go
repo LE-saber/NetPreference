@@ -123,7 +123,7 @@ func run(args []string) error {
 	}
 }
 func rpc(ctx context.Context, args []string) error {
-	methods := map[string]any{"status": map[string]any{}, "devices": map[string]any{}, "traffic": map[string]any{}, "validate": map[string]any{}, "apply": map[string]any{}, "restore": map[string]any{}}
+	methods := map[string]any{"status": map[string]any{}, "devices": map[string]any{}, "traffic": map[string]any{}, "validate": map[string]any{}, "apply": map[string]any{}, "restore": map[string]any{}, "check_config": map[string]any{"config": ""}}
 	if len(args) == 1 && args[0] == "list" {
 		return json.NewEncoder(os.Stdout).Encode(methods)
 	}
@@ -133,23 +133,51 @@ func rpc(ctx context.Context, args []string) error {
 	if _, ok := methods[args[1]]; !ok {
 		return fmt.Errorf("unknown RPC method")
 	}
-	raw, e := io.ReadAll(io.LimitReader(os.Stdin, 8193))
+	text, e := readRPCInput(os.Stdin, args[1])
 	if e != nil {
 		return e
 	}
-	if len(raw) > 8192 {
-		return fmt.Errorf("RPC input too large")
-	}
-	if len(raw) > 0 {
-		var v map[string]any
-		if e = json.Unmarshal(raw, &v); e != nil {
+	if args[1] == "check_config" {
+		// Pure parse/validation. This works even with a stopped or broken daemon,
+		// and never writes UCI or performs DNS/firewall commands.
+		c, e := np.ParseUCI(text)
+		if e != nil {
 			return e
 		}
-		for k := range v {
-			if k != "ubus_rpc_session" {
-				return fmt.Errorf("unexpected RPC parameter %q", k)
-			}
-		}
+		return json.NewEncoder(os.Stdout).Encode(map[string]any{"ok": true, "valid": true, "policies": len(c.Policies), "domain_sets": len(c.DomainSets)})
 	}
 	return run([]string{args[1]})
+}
+
+func readRPCInput(input io.Reader, method string) (string, error) {
+	limit := int64(8192)
+	if method == "check_config" {
+		limit = 2 * 1024 * 1024
+	}
+	raw, e := io.ReadAll(io.LimitReader(input, limit+1))
+	if e != nil {
+		return "", e
+	}
+	if int64(len(raw)) > limit {
+		return "", fmt.Errorf("RPC input too large")
+	}
+	var v map[string]any
+	if len(raw) > 0 {
+		if e = json.Unmarshal(raw, &v); e != nil {
+			return "", e
+		}
+	}
+	for k := range v {
+		if k != "ubus_rpc_session" && !(method == "check_config" && k == "config") {
+			return "", fmt.Errorf("unexpected RPC parameter %q", k)
+		}
+	}
+	if method == "check_config" {
+		text, ok := v["config"].(string)
+		if !ok || text == "" {
+			return "", fmt.Errorf("config must be nonempty UCI text")
+		}
+		return text, nil
+	}
+	return "", nil
 }

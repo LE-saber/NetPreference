@@ -92,11 +92,21 @@ func BuildNFT(c *Config, hosts []Host, replace bool) string {
 	trusted := append([]string{"lo"}, c.Interfaces...)
 	fmt.Fprintf(&b, " chain listener_guard { type filter hook input priority -5; policy accept;\n iifname != { %s } meta l4proto { tcp, udp } th dport 1053 drop\n }\n", quoteList(trusted))
 	if c.Monitor {
-		b.WriteString(" chain observe { type filter hook forward priority -10; policy accept;\n")
+		// Count at the LAN boundary, not only FORWARD. HomeProxy/TProxy may
+		// deliver a connection locally (PREROUTING -> INPUT, OUTPUT -> POSTROUTING).
+		// These chains only count; they neither alter marks/NAT nor accept/drop a
+		// packet on behalf of another chain. Offloaded paths may still be absent.
+		b.WriteString(" chain observe_upload { type filter hook prerouting priority -310; policy accept;\n")
+		for _, h := range hosts {
+			p := counterPrefix(h.MAC)
+			for _, id := range []string{"4", "6"} {
+				fmt.Fprintf(&b, " iifname { %s } ether saddr %s meta nfproto ipv%s counter name %s_%s_up\n", quoteList(c.Interfaces), h.MAC, id, p, id)
+			}
+		}
+		b.WriteString(" }\n chain observe_download { type filter hook postrouting priority 310; policy accept;\n")
 		for _, h := range hosts {
 			p := counterPrefix(h.MAC)
 			for _, f := range []struct{ id, proto string }{{"4", "ip"}, {"6", "ip6"}} {
-				fmt.Fprintf(&b, " iifname { %s } ether saddr %s meta nfproto ipv%s counter name %s_%s_up\n", quoteList(c.Interfaces), h.MAC, f.id, p, f.id)
 				fmt.Fprintf(&b, " oifname { %s } %s daddr @%s_v%s counter name %s_%s_down\n", quoteList(c.Interfaces), f.proto, p, f.id, p, f.id)
 			}
 		}

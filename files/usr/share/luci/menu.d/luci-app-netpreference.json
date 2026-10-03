@@ -23,7 +23,7 @@
   }
  },
  "admin/services/netpreference/advanced": {
-  "title": "高级模式与域名集",
+  "title": "模式集与域名集",
   "order": 20,
   "action": {
    "type": "view",

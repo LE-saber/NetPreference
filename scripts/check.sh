@@ -12,7 +12,9 @@ go test ./internal/netpref -run '^$' -fuzz '^FuzzDomainSetMatchesLinearReference
 python3 scripts/build_ipk.py | tee dist/logs/build.txt
 python3 tests/test_package.py 2>&1 | tee dist/logs/package.txt
 python3 tests/test_workflows.py 2>&1 | tee dist/logs/workflows.txt
+node tests/library_model.js | tee dist/logs/library-model.txt
 node tests/luci_contract.js | tee dist/logs/luci-contract.txt
+NETPREFERENCE_UI_CONFIG="$(pwd)/dist/ux-generated.uci" go test ./internal/netpref -run TestGeneratedUILibraryPreference -count=1 -v | tee dist/logs/ui-backend-roundtrip.txt
 python3 -m py_compile tests/*.py scripts/*.py
 for script in files/etc/init.d/netpreference files/usr/libexec/rpcd/netpreference packaging/*; do sh -n "$script"; done
 printf '%s\n' 'PASS: local test suite. Kernel and rootfs tests are separate.'

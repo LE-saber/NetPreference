@@ -73,10 +73,17 @@ class PackageTests(unittest.TestCase):
         menu=json.loads(self.files['usr/share/luci/menu.d/luci-app-netpreference.json'][0])
         self.assertEqual(menu['admin/services/netpreference']['action']['type'],'firstchild')
         self.assertIn('admin/services/netpreference/advanced',menu)
+        self.assertIn('www/luci-static/resources/netpreference/library.js',self.files)
         methods=json.loads(subprocess.check_output([ROOT/'dist/netpreference','rpc','list']))
-        self.assertEqual(set(methods),{'apply','restore','validate','status','devices','traffic'})
+        self.assertEqual(set(methods),{'apply','restore','validate','status','devices','traffic','check_config'})
         bad=subprocess.run([ROOT/'dist/netpreference','rpc','call','apply'],input=b'{"command":"rm"}',stdout=subprocess.PIPE)
         self.assertNotEqual(bad.returncode,0)
+        for fixture in ('legacy-r6.uci', 'profiles.uci'):
+            payload=json.dumps({'config':(ROOT/'tests/fixtures'/fixture).read_text()}).encode()
+            result=json.loads(subprocess.check_output([ROOT/'dist/netpreference','rpc','call','check_config'],input=payload))
+            self.assertTrue(result['valid'])
+        invalid=subprocess.run([ROOT/'dist/netpreference','rpc','call','check_config'],input=b'{"config":"config profile bad"}',stdout=subprocess.PIPE)
+        self.assertNotEqual(invalid.returncode,0)
     def test_openwrt_prerm_does_not_preempt_default_service_stop(self):
         mk=(ROOT/'openwrt/luci-app-netpreference/Makefile').read_text()
         start=mk.index('define Package/luci-app-netpreference/prerm')

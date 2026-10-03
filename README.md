@@ -1,17 +1,31 @@
 # NetPreference
 
-面向 ImmortalWrt / OpenWrt 的按设备 DNS 策略 LuCI 插件。当前为 **0.2.0 / 0.2.0-r1**，目标是 `x86_64 · ImmortalWrt 24.10.4 · Linux 6.6.110 · LuCI 25.300`。
+面向 ImmortalWrt / OpenWrt 的按设备 DNS 策略 LuCI 插件。当前为 **0.2.0 / 0.2.0-r2**，目标是 `x86_64 · ImmortalWrt 24.10.4 · Linux 6.6.110 · LuCI 25.300`。
 
 **不是 IPv6 强制接管、NAT64 或限速器。** 它通过有限的 A/AAAA 响应时序偏好及明确的 DNS 规则管理已选择设备；未选择设备保留原有 DNS 路径。目标路由器的现场兼容性仍需实机验收，不能把单元测试或 Linux 网络命名空间测试视为整套路由器已验证。
 
 
-## 0.2.0 高级模式
+## 0.2.0-r2: mode sets and domain sets
 
-每台设备保留自己的默认模式和 A/B。可选的命名 **Profile** 仅对匹配域名覆盖偏好、A/B 或主动探测；未匹配域名仍使用设备默认。支持直接填写域名或引用命名 **DomainSet**。留空参数代表继承，显式 `0` 和关闭探测不会被当成缺省值。
+The advanced page now exposes only named **mode sets** and **domain sets**. Each
+mode set contains unnamed rows: a domain or saved set, IPv4/IPv6/dual/custom
+mode, and optional A/B. Internal references are generated automatically.
+New plain domains such as `openai.com` include the apex and all subdomains.
+Untouched legacy exact matches remain exact; the UI offers explicit expansion.
+Each device retains its global default and A/B for unmatched names. Blank row
+parameters inherit; explicit zero and disabled probing are preserved.
 
-旧 `0.1.0-r6` 配置可直接升级，不重写原配置，不需重建设备或规则。高级配置放在独立页面，基础页面只需选择 Profile。详见 [0.2.0 使用指南](docs/PROFILES-0.2.0.md)。
+The same release repairs monitoring lifecycle gaps and observes LAN ingress /
+egress, including local proxy paths missed by FORWARD-only counters. It shows
+**client-facing** address families, not a proxy's WAN family. Counter errors are
+visible; DNS fail-open no longer pauses sampling; profile switches preserve
+session totals. No nlbwmon dependency is introduced.
 
-当前开发分支只生成 Actions 构建附件，不发布 Release。只有 `main` 推送且完整测试与 SDK 构建均通过后才发布正式版。
+See [r2 usage and repair notes](docs/UX-TRAFFIC-0.2.0-r2.md). The earlier
+[0.2.0 model reference](docs/PROFILES-0.2.0.md) documents backend configuration,
+not the current ordinary-user UI. Existing r6/r1 configurations are preserved.
+Development branches publish Actions artifacts only; formal releases remain
+limited to verified main pushes.
 
 ## 已实现
 
@@ -47,12 +61,12 @@
 cd /tmp
 sha256sum -c SHA256SUMS
 opkg update
-opkg install ./luci-app-netpreference_0.2.0-r1_x86_64.ipk
+opkg install ./luci-app-netpreference_0.2.0-r2_x86_64.ipk
 ```
 
 依赖 `luci-base`、`rpcd`、`uci`、`firewall4`、`nftables-json`、`ip-full`、`conntrack`。不捆绑安装或删除 nlbwmon；用户已有 nlbwmon 保持不变。不要在实机使用 `--force-depends` 或强行安装不匹配内核的软件包。
 
-安装后进入 **LuCI → Services / 服务 → NetPreference**。安装默认空闲，不自动选择设备。保持默认上游 `127.0.0.1:53`，确认 LAN 接口（默认 `br-lan`），先添加一台非关键测试设备并点击 **Save & Apply**。界面提供恢复按钮。页面使用简体中文，分为“设备与流量”和“高级模式与域名集”。
+安装后进入 **LuCI → Services / 服务 → NetPreference**。安装默认空闲，不自动选择设备。保持默认上游 `127.0.0.1:53`，确认 LAN 接口（默认 `br-lan`），先添加一台非关键测试设备并点击 **Save & Apply**。界面提供恢复按钮。页面使用简体中文，分为“设备与流量”和“模式集与域名集”。
 
 ## A/B 的实际定义
 

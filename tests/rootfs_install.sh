@@ -51,6 +51,7 @@ IPKG_INSTROOT=/ chroot root /bin/opkg status luci-app-netpreference
 grep -q "option enabled '0'" root/etc/config/netpreference
 test -x root/usr/libexec/rpcd/netpreference
 test -s root/usr/share/rpcd/acl.d/luci-app-netpreference.json
+node "$ROOT/tests/luci_target_uci.js" "$WORK/root"
 IPKG_INSTROOT=/ chroot root /bin/opkg remove luci-app-netpreference
 test ! -e root/usr/sbin/netpreference
 # Install the true r6 binary, persist a real legacy config, then perform an ordinary upgrade.

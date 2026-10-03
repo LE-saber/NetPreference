@@ -163,7 +163,7 @@ config rule 'custom'
 }
 """
         ns(router,'nft','-f','-',input=sentinel);before=ns(router,'nft','-j','list','table','inet','fw4')
-        start(router,sys.executable,FIXTURE,'serve');start(wan,sys.executable,FIXTURE,'echo')
+        dns_fixture=start(router,sys.executable,FIXTURE,'serve');start(wan,sys.executable,FIXTURE,'echo');start(router,sys.executable,FIXTURE,'echo')
         daemon=start(router,BINARY,'serve');guard=start(router,BINARY,'guard')
         wait_for(lambda:ctl('status'))
         expect(first,'192.0.2.1',1,'rewrite.test','198.51.100.7')
@@ -255,7 +255,57 @@ config rule 'custom'
         counters={r['counter']['name']:r['counter']['bytes'] for r in table['nftables'] if 'counter' in r}
         for family in (4,6):
             for direction in ('up','down'):assert counters[f'm020000000001_{family}_{direction}']>0,counters
-        wait_for(lambda:ctl('traffic').get('totals_available'))
+        def observed():
+            snapshot=json.loads(ns(router,BINARY,'rpc','call','traffic',input='{}',env=env))
+            row=next((r for r in snapshot.get('rows',[]) if r['host']['mac']=='02:00:00:00:00:01'),None)
+            if row and all(row[f'ipv{f}_rate']['valid'] and row[f'ipv{f}_rate']['upload_Bps']>0 and row[f'ipv{f}_rate']['download_Bps']>0 and
+                           row['totals'][f'ipv{f}']['upload_bytes']>=20000 and row['totals'][f'ipv{f}']['download_bytes']>=20000 for f in (4,6)):
+                return snapshot
+        snapshot=wait_for(observed,15)
+        rpc=snapshot
+        print('TRAFFIC_FULL_CHAIN',json.dumps(rpc,sort_keys=True),flush=True)
+        (ROOT/'dist/kernel-traffic.json').write_text(json.dumps(rpc,indent=2))
+        def rowof(snap):return next(r for r in snap['rows'] if r['host']['mac']=='02:00:00:00:00:01')
+        def counts():
+            data=json.loads(ns(router,'nft','-j','list','table','inet','netpreference'))
+            return {r['counter']['name']:r['counter']['bytes'] for r in data['nftables'] if 'counter' in r}
+        def nondecreasing(old,new):
+            for family in ('ipv4','ipv6'):
+                for direction in ('upload_bytes','download_bytes'):assert new['totals'][family][direction]>=old['totals'][family][direction],(old,new)
+        assert 0<rowof(rpc)['ipv6_ratio']<1,rpc
+        # Profile-only reload must not rebuild the raw counters or clear totals.
+        before_counts=counts();before_row=rowof(ctl('traffic'))
+        active_config=p.read_text()
+        p.write_text(active_config.replace("option profile 'work'","option profile 'travel'",1));assert ctl('reload')['ok']
+        after_counts=counts()
+        for name,value in before_counts.items():assert after_counts[name]>=value,(name,value,after_counts)
+        nondecreasing(before_row,rowof(ctl('traffic')))
+        p.write_text(active_config);assert ctl('reload')['ok']
+        # Traffic terminating in a local proxy takes INPUT/OUTPUT, not FORWARD.
+        # No HomeProxy binary is installed in this lab: exercise its packet path.
+        before_counts=counts()
+        ns(first,sys.executable,FIXTURE,'traffic','192.0.2.1');ns(first,sys.executable,FIXTURE,'traffic','fd42:1::1')
+        after_counts=counts()
+        for family in (4,6):
+            for direction in ('up','down'):
+                name=f'm020000000001_{family}_{direction}'
+                assert after_counts[name]-before_counts[name]>=20000,(name,before_counts,after_counts)
+        # New inventory membership really rebuilds the table; keep past totals
+        # while explicitly invalidating the rate generation.
+        before_row=rowof(ctl('traffic'))
+        p.write_text(active_config+"\nconfig device 'spare'\n option enabled '0'\n option mac '02:00:00:00:00:03'\n")
+        assert ctl('reload')['ok'];nondecreasing(before_row,rowof(ctl('traffic')))
+        p.write_text(active_config);assert ctl('reload')['ok']
+        # Original DNS chain outage pauses DNS interception, not read-only
+        # traffic observation. Echo traffic must continue accumulating.
+        dns_fixture.terminate();dns_fixture.wait(timeout=5)
+        wait_for(lambda:not ctl('status')['active'],15)
+        before_row=rowof(ctl('traffic'))
+        ns(first,sys.executable,FIXTURE,'traffic','192.0.2.1');ns(first,sys.executable,FIXTURE,'traffic','fd42:1::1')
+        wait_for(lambda:all(rowof(ctl('traffic'))['totals'][f'ipv{f}']['download_bytes']>before_row['totals'][f'ipv{f}']['download_bytes'] for f in (4,6)),15)
+        dns_fixture=start(router,sys.executable,FIXTURE,'serve')
+        wait_for(lambda:ctl('status')['active'],15)
+        print('PASS: nft -> sampler -> runtime -> CLI/RPC four-direction rates/totals/ratio; profile reload, host churn, local-proxy path and DNS fail-open sampling',flush=True)
         assert ns(router,'nft','-j','list','table','inet','fw4')==before
         # SIGKILL cannot run defer/stop handlers: separate watchdog must recover.
         expect(first,'192.0.2.1',1,'rewrite.test','203.0.113.77',port=42054)

@@ -3,7 +3,9 @@ package netpref
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -22,14 +24,18 @@ type Rates struct {
 	Valid bool    `json:"valid"`
 }
 type TrafficRow struct {
-	Host      Host       `json:"host"`
-	Totals    HostTotals `json:"totals"`
-	V4        Rates      `json:"ipv4_rate"`
-	V6        Rates      `json:"ipv6_rate"`
-	IPv6Ratio float64    `json:"ipv6_ratio"`
+	Host        Host       `json:"host"`
+	Totals      HostTotals `json:"totals"`
+	V4          Rates      `json:"ipv4_rate"`
+	V6          Rates      `json:"ipv6_rate"`
+	IPv6Ratio   float64    `json:"ipv6_ratio"`
+	V4Available bool       `json:"ipv4_available"`
+	V6Available bool       `json:"ipv6_available"`
 }
 type TrafficSnapshot struct {
 	Enabled         bool         `json:"enabled"`
+	State           string       `json:"state"`
+	MissingCounters []string     `json:"missing_counters,omitempty"`
 	At              string       `json:"at"`
 	Interval        float64      `json:"interval_seconds"`
 	TotalsAvailable bool         `json:"totals_available"`
@@ -43,8 +49,10 @@ func ParseCounters(b []byte) (map[string]uint64, error) {
 	var v struct {
 		NFTables []struct {
 			Counter *struct {
-				Name  string
-				Bytes json.Number
+				Name   string
+				Family string
+				Table  string
+				Bytes  json.Number
 			} `json:"counter"`
 		} `json:"nftables"`
 	}
@@ -54,9 +62,15 @@ func ParseCounters(b []byte) (map[string]uint64, error) {
 	out := map[string]uint64{}
 	for _, r := range v.NFTables {
 		if r.Counter != nil {
+			if (r.Counter.Family != "" && r.Counter.Family != "inet") || (r.Counter.Table != "" && r.Counter.Table != TableName) {
+				continue
+			}
 			n, e := strconv.ParseUint(string(r.Counter.Bytes), 10, 64)
 			if e != nil {
 				return nil, e
+			}
+			if _, exists := out[r.Counter.Name]; exists {
+				return nil, fmt.Errorf("duplicate named counter %s", r.Counter.Name)
 			}
 			out[r.Counter.Name] = n
 		}
@@ -74,7 +88,7 @@ type Traffic struct {
 }
 
 func NewTraffic(r Runner) *Traffic {
-	return &Traffic{runner: r, totals: map[string]HostTotals{}}
+	return &Traffic{runner: r, totals: map[string]HostTotals{}, snapshot: TrafficSnapshot{State: "off", Rows: []TrafficRow{}}}
 }
 func (t *Traffic) Reset() {
 	t.mu.Lock()
@@ -82,7 +96,16 @@ func (t *Traffic) Reset() {
 	t.prev = nil
 	t.totals = map[string]HostTotals{}
 	t.at = time.Time{}
-	t.snapshot = TrafficSnapshot{Rows: []TrafficRow{}}
+	t.snapshot = TrafficSnapshot{State: "off", Rows: []TrafficRow{}}
+}
+
+// Rebase invalidates only the raw-counter generation. Completed diagnostic
+// totals survive profile changes, host discovery and owned table recreation.
+func (t *Traffic) Rebase() {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.prev = nil
+	t.at = time.Time{}
 }
 func (t *Traffic) Off() {
 	t.mu.Lock()
@@ -90,17 +113,20 @@ func (t *Traffic) Off() {
 	t.prev = nil
 	t.totals = map[string]HostTotals{}
 	t.at = time.Time{}
-	t.snapshot = TrafficSnapshot{Rows: []TrafficRow{}}
+	t.snapshot = TrafficSnapshot{State: "off", Rows: []TrafficRow{}}
 }
 func (t *Traffic) Snapshot() TrafficSnapshot { t.mu.RLock(); defer t.mu.RUnlock(); return t.snapshot }
 func (t *Traffic) Sample(ctx context.Context, hosts []Host) {
-	now := time.Now()
+	t.sampleAt(ctx, hosts, time.Now())
+}
+func (t *Traffic) sampleAt(ctx context.Context, hosts []Host, now time.Time) {
 	s := TrafficSnapshot{
 		Enabled: true,
+		State:   "warming_up",
 		At:      now.UTC().Format(time.RFC3339),
 		Rows:    []TrafficRow{},
-		Source:  "rates and session totals=nft software-path counters",
-		Caveat:  "Session totals are diagnostic only and reset when monitoring/service counters reset. Flow/hardware offload can undercount traffic that bypasses the software path.",
+		Source:  "LAN family rates and session totals=nft software-path counters",
+		Caveat:  "Session totals are diagnostic only. They reset on monitoring disable/service restart, not profile changes. Counter gaps are not estimated. Includes router/local-proxy traffic; client-facing IP family is not the proxy WAN family. Flow/hardware offload can undercount bypassed traffic.",
 	}
 
 	b, e := t.runner.Run(ctx, "nft", []string{"-j", "list", "table", "inet", TableName}, nil)
@@ -109,8 +135,23 @@ func (t *Traffic) Sample(ctx context.Context, hosts []Host) {
 		counters, e = ParseCounters(b)
 	}
 	s.TotalsAvailable = e == nil
+	if e == nil {
+		for _, h := range hosts {
+			for _, suffix := range []string{"_4_up", "_4_down", "_6_up", "_6_down"} {
+				name := counterPrefix(h.MAC) + suffix
+				if _, ok := counters[name]; !ok {
+					s.MissingCounters = append(s.MissingCounters, name)
+				}
+			}
+		}
+		if len(s.MissingCounters) > 0 {
+			s.TotalsAvailable = false
+			e = fmt.Errorf("missing %d named counters (%s); check the owned nft table and LAN discovery", len(s.MissingCounters), strings.Join(s.MissingCounters, ", "))
+		}
+	}
 	if e != nil {
 		s.Error = "traffic counters: " + e.Error()
+		s.State = "unavailable"
 	}
 
 	t.mu.Lock()
@@ -122,26 +163,26 @@ func (t *Traffic) Sample(ctx context.Context, hosts []Host) {
 		s.Interval = now.Sub(t.at).Seconds()
 	}
 
-	sampleFamily := func(prefix string, total *Totals) Rates {
+	sampleFamily := func(prefix string, total *Totals) (Rates, bool) {
 		u, uok := counters[prefix+"_up"]
 		d, dok := counters[prefix+"_down"]
 		pu, puok := t.prev[prefix+"_up"]
 		pd, pdok := t.prev[prefix+"_down"]
 		valid := uok && dok && puok && pdok && u >= pu && d >= pd && s.Interval > 0
 		if !valid {
-			return Rates{}
+			return Rates{}, uok && dok
 		}
 		du, dd := u-pu, d-pd
 		total.Up += du
 		total.Down += dd
-		return Rates{float64(du) / s.Interval, float64(dd) / s.Interval, true}
+		return Rates{float64(du) / s.Interval, float64(dd) / s.Interval, true}, true
 	}
 
 	for _, h := range hosts {
 		v := t.totals[h.MAC]
 		p := counterPrefix(h.MAC)
-		v4 := sampleFamily(p+"_4", &v.V4)
-		v6 := sampleFamily(p+"_6", &v.V6)
+		v4, a4 := sampleFamily(p+"_4", &v.V4)
+		v6, a6 := sampleFamily(p+"_6", &v.V6)
 		t.totals[h.MAC] = v
 
 		all := v.V4.Up + v.V4.Down + v.V6.Up + v.V6.Down
@@ -149,7 +190,13 @@ func (t *Traffic) Sample(ctx context.Context, hosts []Host) {
 		if all > 0 {
 			ratio = float64(v.V6.Up+v.V6.Down) / float64(all)
 		}
-		s.Rows = append(s.Rows, TrafficRow{h, v, v4, v6, ratio})
+		s.Rows = append(s.Rows, TrafficRow{Host: h, Totals: v, V4: v4, V6: v6, IPv6Ratio: ratio, V4Available: a4, V6Available: a6})
+		if e == nil && v4.Valid && v6.Valid {
+			s.State = "ready"
+		}
+		if e != nil && (a4 || a6) {
+			s.State = "partial"
+		}
 	}
 	t.prev = counters
 	t.at = now

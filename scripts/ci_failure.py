@@ -18,7 +18,7 @@ if os.environ.get('GITHUB_EVENT_NAME')!='push' or branch in ('','main'):
     raise SystemExit('failure commits are allowed only for non-main push events')
 subprocess.run(['git','check-ref-format','--branch',branch],check=True,stdout=subprocess.DEVNULL)
 run=os.environ.get('GITHUB_RUN_ID','local');attempt=os.environ.get('GITHUB_RUN_ATTEMPT','1')
-path=Path('docs/failures/0.2.0')/f'ci-{run}-{attempt}-{phase}.md'
+path=Path('docs/failures/0.2.0-r2')/f'ci-{run}-{attempt}-{phase}.md'
 path.parent.mkdir(parents=True,exist_ok=True)
 log=Path(sys.argv[2]) if len(sys.argv)>2 else Path('dist/logs')/(phase+'.txt')
 text=log.read_text(errors='replace')[-16000:] if log.exists() else 'No phase log produced; inspect the job steps and outcomes artifact.'
