@@ -2,7 +2,32 @@
  "admin/services/netpreference": {
   "title": "NetPreference 网络偏好",
   "order": 65,
-  "action": {"type": "view", "path": "netpreference/overview"},
-  "depends": {"acl": ["luci-app-netpreference"], "uci": {"netpreference": true}}
+  "action": {
+   "type": "firstchild"
+  },
+  "depends": {
+   "acl": [
+    "luci-app-netpreference"
+   ],
+   "uci": {
+    "netpreference": true
+   }
+  }
+ },
+ "admin/services/netpreference/overview": {
+  "title": "设备与流量",
+  "order": 10,
+  "action": {
+   "type": "view",
+   "path": "netpreference/overview"
+  }
+ },
+ "admin/services/netpreference/advanced": {
+  "title": "模式集与域名集",
+  "order": 20,
+  "action": {
+   "type": "view",
+   "path": "netpreference/advanced"
+  }
  }
 }

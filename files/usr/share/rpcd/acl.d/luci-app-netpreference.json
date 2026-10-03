@@ -2,12 +2,32 @@
  "luci-app-netpreference": {
   "description": "Manage NetPreference DNS policies; no generic command execution",
   "read": {
-   "ubus": {"netpreference": ["status", "devices", "traffic", "validate"]},
-   "uci": ["netpreference"]
+   "ubus": {
+    "netpreference": [
+     "status",
+     "devices",
+     "traffic",
+     "validate",
+     "check_config"
+    ]
+   },
+   "uci": [
+    "netpreference"
+   ]
   },
   "write": {
-   "ubus": {"netpreference": ["apply", "restore"], "uci": ["commit"]},
-   "uci": ["netpreference"]
+   "ubus": {
+    "netpreference": [
+     "apply",
+     "restore"
+    ],
+    "uci": [
+     "commit"
+    ]
+   },
+   "uci": [
+    "netpreference"
+   ]
   }
  }
 }

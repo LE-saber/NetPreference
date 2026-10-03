@@ -73,11 +73,35 @@ printf '%s\\n' '{"columns":["family","mac","rx_bytes","tx_bytes"],"data":[[4,"02
 config device 'selected'
  option enabled '1'
  option name 'selected'
+ option profile 'work'
  option mac '02:00:00:00:00:01'
  option mode 'ipv6'
  option wait_ms '120'
  option delay_ms '100'
  option probe '1'
+config profile 'work'
+ option name 'Work'
+config profile 'travel'
+ option name 'Travel'
+config domain_set 'v4_domains'
+ option name 'V4 domains'
+ list domain '*.v4.test'
+config policy 'v4_override'
+ option profile 'work'
+ option domain_set 'v4_domains'
+ option mode 'ipv4'
+ option wait_ms '90'
+ option delay_ms '180'
+config policy 'short_override'
+ option profile 'work'
+ option domain 'fast.test'
+ option mode 'ipv6'
+ option wait_ms '90'
+ option delay_ms '45'
+config policy 'travel_dual'
+ option profile 'travel'
+ option domain '*'
+ option mode 'dual'
 config rule 'static'
  option device '*'
  option domain 'rewrite.test'
@@ -139,7 +163,7 @@ config rule 'custom'
 }
 """
         ns(router,'nft','-f','-',input=sentinel);before=ns(router,'nft','-j','list','table','inet','fw4')
-        start(router,sys.executable,FIXTURE,'serve');start(wan,sys.executable,FIXTURE,'echo')
+        dns_fixture=start(router,sys.executable,FIXTURE,'serve');start(wan,sys.executable,FIXTURE,'echo');start(router,sys.executable,FIXTURE,'echo')
         daemon=start(router,BINARY,'serve');guard=start(router,BINARY,'guard')
         wait_for(lambda:ctl('status'))
         expect(first,'192.0.2.1',1,'rewrite.test','198.51.100.7')
@@ -194,6 +218,29 @@ config rule 'custom'
         expect(first,'192.0.2.1',1,'x.blocked.test',rcode=3)
         expect(second,'192.0.2.1',1,'x.blocked.test','198.51.100.7')
         r=expect(first,'192.0.2.1',1,'preference.test','198.51.100.7');assert r['elapsed']>=0.07,r
+        # Domain sets and domain-specific A/B apply on both DNS transports and IP families.
+        for host in ('192.0.2.1','fd42:1::1'):
+            for proto in ('udp','tcp'):
+                r=expect(first,host,28,'deep.v4.test','2001:db8::7',proto=proto)
+                assert 0.15 <= r['elapsed'] < 1.5,r
+                r=expect(first,host,1,'fast.test','198.51.100.7',proto=proto)
+                assert 0.03 <= r['elapsed'] < 1.5,r
+        # Reject bad references without losing the active policy or touching shared NAT66.
+        p=base/'config';saved=p.read_text()
+        p.write_text(saved.replace("option profile 'work'","option profile 'missing'",1))
+        failed=subprocess.run(['ip','netns','exec',router,str(BINARY),'reload'],env=env,text=True,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+        assert failed.returncode != 0,failed.stdout
+        rejected=json.loads(failed.stdout);assert not rejected.get('ok',True),rejected
+        assert ctl('status')['active']
+        r=expect(first,'192.0.2.1',28,'deep.v4.test','2001:db8::7');assert r['elapsed']>=0.15,r
+        p.write_text(saved.replace("option profile 'work'","option profile 'travel'",1))
+        assert ctl('reload')['ok']
+        delays=ctl('status')['delayed']
+        expect(first,'192.0.2.1',28,'deep.v4.test','2001:db8::7')
+        assert ctl('status')['delayed']==delays,'old profile remained after switch'
+        expect(first,'192.0.2.1',1,'x.blocked.test',rcode=3)
+        p.write_text(saved);assert ctl('reload')['ok']
+        assert ns(router,'nft','-j','list','table','inet','fw4')==before
         expect(first,'192.0.2.1',1,'fallback.test','198.51.100.7')
         expect(first,'192.0.2.1',1,'rewrite.test','203.0.113.77',port=42053)
         # A successful restore also cleans the already cached UDP DNAT tuple.
@@ -208,17 +255,80 @@ config rule 'custom'
         counters={r['counter']['name']:r['counter']['bytes'] for r in table['nftables'] if 'counter' in r}
         for family in (4,6):
             for direction in ('up','down'):assert counters[f'm020000000001_{family}_{direction}']>0,counters
-        wait_for(lambda:ctl('traffic').get('totals_available'))
+        def observed():
+            snapshot=json.loads(ns(router,BINARY,'rpc','call','traffic',input='{}',env=env))
+            row=next((r for r in snapshot.get('rows',[]) if r['host']['mac']=='02:00:00:00:00:01'),None)
+            if row and all(row[f'ipv{f}_rate']['valid'] and row[f'ipv{f}_rate']['upload_Bps']>0 and row[f'ipv{f}_rate']['download_Bps']>0 and
+                           row['totals'][f'ipv{f}']['upload_bytes']>=20000 and row['totals'][f'ipv{f}']['download_bytes']>=20000 for f in (4,6)):
+                return snapshot
+        snapshot=wait_for(observed,15)
+        rpc=snapshot
+        print('TRAFFIC_FULL_CHAIN',json.dumps(rpc,sort_keys=True),flush=True)
+        (ROOT/'dist/kernel-traffic.json').write_text(json.dumps(rpc,indent=2))
+        def rowof(snap):return next(r for r in snap['rows'] if r['host']['mac']=='02:00:00:00:00:01')
+        def counts():
+            data=json.loads(ns(router,'nft','-j','list','table','inet','netpreference'))
+            return {r['counter']['name']:r['counter']['bytes'] for r in data['nftables'] if 'counter' in r}
+        def nondecreasing(old,new):
+            for family in ('ipv4','ipv6'):
+                for direction in ('upload_bytes','download_bytes'):assert new['totals'][family][direction]>=old['totals'][family][direction],(old,new)
+        assert 0<rowof(rpc)['ipv6_ratio']<1,rpc
+        # Profile-only reload must not rebuild the raw counters or clear totals.
+        before_counts=counts();before_row=rowof(ctl('traffic'))
+        active_config=p.read_text()
+        p.write_text(active_config.replace("option profile 'work'","option profile 'travel'",1));assert ctl('reload')['ok']
+        after_counts=counts()
+        for name,value in before_counts.items():assert after_counts[name]>=value,(name,value,after_counts)
+        nondecreasing(before_row,rowof(ctl('traffic')))
+        p.write_text(active_config);assert ctl('reload')['ok']
+        # Traffic terminating in a local proxy takes INPUT/OUTPUT, not FORWARD.
+        # No HomeProxy binary is installed in this lab: exercise its packet path.
+        before_counts=counts()
+        ns(first,sys.executable,FIXTURE,'traffic','192.0.2.1');ns(first,sys.executable,FIXTURE,'traffic','fd42:1::1')
+        after_counts=counts()
+        for family in (4,6):
+            for direction in ('up','down'):
+                name=f'm020000000001_{family}_{direction}'
+                assert after_counts[name]-before_counts[name]>=20000,(name,before_counts,after_counts)
+        # New inventory membership really rebuilds the table; keep past totals
+        # while explicitly invalidating the rate generation.
+        before_row=rowof(ctl('traffic'))
+        p.write_text(active_config+"\nconfig device 'spare'\n option enabled '0'\n option mac '02:00:00:00:00:03'\n")
+        assert ctl('reload')['ok'];nondecreasing(before_row,rowof(ctl('traffic')))
+        p.write_text(active_config);assert ctl('reload')['ok']
+        # Original DNS chain outage pauses DNS interception, not read-only
+        # traffic observation. Echo traffic must continue accumulating.
+        dns_fixture.terminate();dns_fixture.wait(timeout=5)
+        wait_for(lambda:not ctl('status')['active'],15)
+        before_row=rowof(ctl('traffic'))
+        ns(first,sys.executable,FIXTURE,'traffic','192.0.2.1');ns(first,sys.executable,FIXTURE,'traffic','fd42:1::1')
+        wait_for(lambda:all(rowof(ctl('traffic'))['totals'][f'ipv{f}']['download_bytes']>before_row['totals'][f'ipv{f}']['download_bytes'] for f in (4,6)),15)
+        dns_fixture=start(router,sys.executable,FIXTURE,'serve')
+        wait_for(lambda:ctl('status')['active'],15)
+        print('PASS: nft -> sampler -> runtime -> CLI/RPC four-direction rates/totals/ratio; profile reload, host churn, local-proxy path and DNS fail-open sampling',flush=True)
         assert ns(router,'nft','-j','list','table','inet','fw4')==before
         # SIGKILL cannot run defer/stop handlers: separate watchdog must recover.
         expect(first,'192.0.2.1',1,'rewrite.test','203.0.113.77',port=42054)
+        def stale_dns_mapping():
+            return ns(router,'conntrack','-L','-f','ipv4','-p','udp',
+                      '-s','192.0.2.2','--sport','42054','--dport','53',
+                      '--reply-src','192.0.2.1','--reply-port-src','1053').strip()
+        assert stale_dns_mapping(),'the SIGKILL fixture must have a cached DNAT tuple'
+        killed_at=time.monotonic()
         daemon.kill();daemon.wait(timeout=5)
-        def removed():return 'netpreference' not in ns(router,'nft','list','tables')
-        wait_for(removed,15)
+        # Removing the nft table and clearing old conntrack are separate kernel
+        # operations. Observe both, with the original deadline, before making
+        # one strict DNS query on the SAME old port. Never retry that query to
+        # hide a failure, and never treat table removal alone as completion.
+        def recovered():
+            if 'netpreference' in ns(router,'nft','list','tables'):return False
+            return not stale_dns_mapping()
+        wait_for(recovered,15)
+        print('RECOVERY nft and cached DNAT cleared in',time.monotonic()-killed_at,'seconds',flush=True)
         expect(first,'192.0.2.1',1,'rewrite.test','198.51.100.7',port=42054)
         expect(first,'fd42:1::1',28,'rewrite.test','2001:db8::7')
         assert ns(router,'nft','-j','list','table','inet','fw4')==before
-        print('PASS: real IPv4/IPv6 UDP/TCP per-device redirect, timing, rules, custom fallback, own-table restore, identical-tuple conntrack recovery, SIGKILL watchdog, forwarded counters and NAT66 preservation.',flush=True)
+        print('PASS: real IPv4/IPv6 UDP/TCP per-device redirect, domain profiles/A-B/switch/invalid-reference rollback, timing, rules, custom fallback, own-table restore, identical-tuple conntrack recovery, SIGKILL watchdog, forwarded counters and NAT66 preservation.',flush=True)
         print('LIMIT: UCI/nlbw are fixtures; host kernel is not the target ImmortalWrt kernel; LuCI/procd target acceptance is separate.',flush=True)
     finally:
         for proc in reversed(processes):

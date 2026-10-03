@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -140,7 +141,8 @@ func (m *Manager) Apply(ctx context.Context, force bool) error {
 		m.lastErr = e.Error()
 		return e
 	}
-	if _, e = m.Firewall.Inspect(ctx); e != nil {
+	exists, e := m.Firewall.Inspect(ctx)
+	if e != nil {
 		m.lastErr = e.Error()
 		return e
 	}
@@ -155,7 +157,19 @@ func (m *Manager) Apply(ctx context.Context, force bool) error {
 		return e
 	}
 	hosts := m.Inventory.Hosts()
-	if e = m.Firewall.Apply(ctx, &c, hosts); e != nil {
+	// DNS/profile-only changes need no table replacement. Named counters stay
+	// alive while selected MAC/address sets are refreshed atomically.
+	rebuild := !exists || !old.Enabled || old.Monitor != c.Monitor ||
+		!slices.Equal(old.Interfaces, c.Interfaces) || !sameHosts(oldhosts, hosts)
+	if rebuild {
+		if old.Enabled && old.Monitor {
+			m.Traffic.Sample(ctx, oldhosts)
+		}
+		e = m.Firewall.Apply(ctx, &c, hosts)
+	} else {
+		e = m.Firewall.Refresh(ctx, &c, hosts, true)
+	}
+	if e != nil {
 		_ = m.Inventory.Refresh(ctx, &old)
 		m.lastErr = e.Error()
 		return e
@@ -173,6 +187,7 @@ func (m *Manager) Apply(ctx context.Context, force bool) error {
 		var rollback error
 		if old.Enabled {
 			rollback = m.Firewall.Apply(ctx, &old, oldhosts)
+			m.Traffic.Rebase()
 		} else {
 			rollback = m.Firewall.Remove(ctx)
 		}
@@ -198,8 +213,13 @@ func (m *Manager) Apply(ctx context.Context, force bool) error {
 	m.Engine.SetConfig(c)
 	m.active = true
 	m.lastErr = ""
-	m.Traffic.Reset()
-	if !c.Monitor {
+	if rebuild {
+		m.Traffic.Rebase()
+	}
+	if c.Monitor {
+		// An enabled monitor is never advertised as off while awaiting first tick.
+		m.Traffic.Sample(ctx, hosts)
+	} else {
 		m.Traffic.Off()
 	}
 	return nil
@@ -260,6 +280,15 @@ func (m *Manager) Tick(ctx context.Context) {
 		return
 	}
 	hosts := m.Inventory.Hosts()
+	// Observation is a read-only activity, independent of DNS health. Even on
+	// a fail-open return, publish fresh samples or an explicit diagnostic error.
+	defer func() {
+		if c.Monitor {
+			m.Traffic.Sample(ctx, hosts)
+		} else {
+			m.Traffic.Off()
+		}
+	}()
 	healthy := m.Health(ctx, &c) == nil
 	if !healthy {
 		m.active = false
@@ -286,8 +315,13 @@ func (m *Manager) Tick(ctx context.Context) {
 	exists, er := m.Firewall.Inspect(ctx)
 	if er == nil {
 		if !exists || !sameHosts(m.hosts, hosts) {
+			if c.Monitor && exists {
+				m.Traffic.Sample(ctx, m.hosts)
+			}
 			er = m.Firewall.Apply(ctx, &c, hosts)
-			m.Traffic.Reset()
+			if er == nil {
+				m.Traffic.Rebase()
+			}
 		} else {
 			er = m.Firewall.Refresh(ctx, &c, hosts, true)
 		}
@@ -305,11 +339,6 @@ func (m *Manager) Tick(ctx context.Context) {
 	m.active = true
 	m.Engine.SetConfig(c)
 	m.lastErr = ""
-	if c.Monitor {
-		m.Traffic.Sample(ctx, hosts)
-	} else {
-		m.Traffic.Off()
-	}
 }
 func (m *Manager) pauseLocked(ctx context.Context, c Config, err error) {
 	m.active = false
@@ -406,7 +435,7 @@ func ListenControl(path string, m *Manager) (*ControlServer, error) {
 			var c Config
 			c, err = LoadConfig(r.Context(), m.Runner)
 			if err == nil {
-				result = map[string]any{"valid": true, "devices": len(c.Devices), "rules": len(c.Rules)}
+				result = map[string]any{"valid": true, "devices": len(c.Devices), "rules": len(c.Rules), "profiles": len(c.Profiles), "domain_sets": len(c.DomainSets), "policies": len(c.Policies)}
 			}
 		default:
 			w.WriteHeader(404)

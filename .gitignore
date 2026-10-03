@@ -3,3 +3,6 @@ dist/
 *.test
 __pycache__/
 .bootstrap/
+dist-sdk/
+dist-legacy/
+.ci-artifacts/

@@ -15,7 +15,7 @@ func TestWildcardUDPReplySource(t *testing.T) {
 	c.Upstream = up
 	for _, bind := range []string{"0.0.0.0:0", "[::]:0"} {
 		t.Run(bind, func(t *testing.T) {
-			s, err := ListenDNS(bind, NewEngine(c), func(net.IP) string { return testMAC })
+			s, err := listenFixtureDNS(bind, NewEngine(c), func(net.IP) string { return testMAC })
 			if err != nil {
 				t.Fatal(err)
 			}
