@@ -77,6 +77,6 @@ Outputs are written to `dist/`. The [SDK package Makefile](openwrt/luci-app-netp
 
 [Execution record](docs/EXECUTION.md) · [Verification ledger](docs/VERIFICATION.md) · [Failure records](docs/failures/)
 
-These records describe earlier development stages; some refer to the earlier nlbwmon-based design. Current traffic behavior is defined by [traffic.go](internal/netpref/traffic.go) and the [LuCI view](files/www/luci-static/resources/view/netpreference/overview.js). This documentation change does not rerun router or runtime tests.
+These records describe earlier development stages; some refer to the earlier nlbwmon-based design. Current traffic behavior is defined by [traffic.go](internal/netpref/traffic.go) and the [LuCI view](files/www/luci-static/resources/view/netpreference/overview.js). No target-router acceptance testing was performed for this documentation update. Consult this PR’s [GitHub Actions checks](https://github.com/LE-saber/NetPreference/pull/3/checks) for automated runtime results.
 
 MIT License: [LICENSE](LICENSE). The compiled Go standard library has its own [BSD license](docs/LICENSE-Go).

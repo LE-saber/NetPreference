@@ -77,6 +77,6 @@ python3 scripts/build_ipk.py
 
 [執行記錄](docs/EXECUTION.md) · [驗證台帳](docs/VERIFICATION.md) · [失敗記錄](docs/failures/)
 
-既有記錄反映早期開發階段，部分仍描述 nlbwmon 舊設計。目前流量行為以 [traffic.go](internal/netpref/traffic.go) 與 [LuCI 頁面](files/www/luci-static/resources/view/netpreference/overview.js) 為準。本次文件更新未重新執行實機或執行階段測試。
+既有記錄反映早期開發階段，部分仍描述 nlbwmon 舊設計。目前流量行為以 [traffic.go](internal/netpref/traffic.go) 與 [LuCI 頁面](files/www/luci-static/resources/view/netpreference/overview.js) 為準。本次文件更新未進行目標路由器驗收測試。自動化執行階段測試結果請查看此 PR 的 [GitHub Actions 檢查](https://github.com/LE-saber/NetPreference/pull/3/checks)。
 
 MIT 授權：[LICENSE](LICENSE)。編入程式的 Go 標準函式庫另附 [BSD 授權](docs/LICENSE-Go)。

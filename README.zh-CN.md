@@ -90,6 +90,6 @@ sudo bash tests/rootfs_install.sh
 
 早期开发分支为 `feat/mvp`。执行计划见 [EXECUTION.md](docs/EXECUTION.md)，测试证据与未验证项见 [VERIFICATION.md](docs/VERIFICATION.md)，中断失败及恢复记录在 [docs/failures](docs/failures/)。
 
-上述文档记录早期开发阶段，部分仍涉及 nlbwmon 旧方案。当前流量行为以 [traffic.go](internal/netpref/traffic.go) 和 [LuCI 页面](files/www/luci-static/resources/view/netpreference/overview.js) 为准。本次文档更新未重新执行实机或运行测试。
+上述文档记录早期开发阶段，部分仍涉及 nlbwmon 旧方案。当前流量行为以 [traffic.go](internal/netpref/traffic.go) 和 [LuCI 页面](files/www/luci-static/resources/view/netpreference/overview.js) 为准。本次文档更新未进行目标路由器验收测试。自动化运行测试结果请查看此 PR 的 [GitHub Actions 检查](https://github.com/LE-saber/NetPreference/pull/3/checks)。
 
 许可证：[MIT](LICENSE)；编译进程序的 Go 标准库另附 [BSD 许可证](docs/LICENSE-Go)。

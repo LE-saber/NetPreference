@@ -77,6 +77,6 @@ python3 scripts/build_ipk.py
 
 [実行記録](docs/EXECUTION.md) · [検証台帳](docs/VERIFICATION.md) · [失敗記録](docs/failures/)
 
-これらは以前の開発段階の記録で、一部に nlbwmon を使う旧設計の記述があります。現在の流量処理は [traffic.go](internal/netpref/traffic.go) と [LuCI UI](files/www/luci-static/resources/view/netpreference/overview.js) を参照してください。今回の文書変更ではルーターや実行時のテストを再実行していません。
+これらは以前の開発段階の記録で、一部に nlbwmon を使う旧設計の記述があります。現在の流量処理は [traffic.go](internal/netpref/traffic.go) と [LuCI UI](files/www/luci-static/resources/view/netpreference/overview.js) を参照してください。今回の文書更新では対象ルーターの受け入れテストを行っていません。自動化された実行時テストの結果は、この PR の [GitHub Actions チェック](https://github.com/LE-saber/NetPreference/pull/3/checks)を参照してください。
 
 MIT License：[LICENSE](LICENSE)。組み込む Go 標準ライブラリには別の [BSD ライセンス](docs/LICENSE-Go)があります。
