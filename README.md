@@ -1,96 +1,82 @@
 # NetPreference
 
-面向 ImmortalWrt / OpenWrt 的按设备 DNS 策略 LuCI 插件。当前为 **0.1.0 MVP**，目标是 `x86_64 · ImmortalWrt 24.10.4 · Linux 6.6.110 · LuCI 25.300`。
+[English](README.md) · [简体中文](README.zh-CN.md) · [繁體中文](README.zh-TW.md) · [日本語](README.ja.md)
 
-**不是 IPv6 强制接管、NAT64 或限速器。** 它通过有限的 A/AAAA 响应时序偏好及明确的 DNS 规则管理已选择设备；未选择设备保留原有 DNS 路径。目标路由器的现场兼容性仍需实机验收，不能把单元测试或 Linux 网络命名空间测试视为整套路由器已验证。
+Per-device DNS policy and IPv4/IPv6 preference for **ImmortalWrt / OpenWrt**, with a Go service and LuCI interface. It controls selected devices through bounded A/AAAA response timing and explicit DNS rules, while leaving unselected devices on their existing DNS path.
 
-## 已实现
+**Release:** [v0.1.0 MVP](https://github.com/LE-saber/NetPreference/releases/tag/v0.1.0), package revision `0.1.0-r6`, targeting OpenWrt/ImmortalWrt 24.10 x86_64. The release identifies ImmortalWrt 24.10.4 as its tested target; individual router setups still need acceptance checks. The current LuCI interface is Simplified Chinese. These README translations do not change it.
 
-- LuCI 设备管理：普通双栈、IPv6 优先、IPv4 优先、自定义偏好、整设备 DNS 阻断；支持 MAC 发现及同一设备的 IPv4/IPv6 地址。
-- 域名规则：设备级／所有已选设备、精确域名／子域名、A/AAAA/HTTPS/SVCB 类型，支持 rewrite、指定地址、NXDOMAIN、NODATA、REFUSED、sinkhole、按类型过滤和上游覆盖。
-- 可关闭的流量观察：IPv4/IPv6 上传、下载速率；读取现有 nlbwmon 的当前统计周期累计值及 IPv6 占比。**不是终身累计，硬件／软件 flow offload 可能造成实时速率低估。**
-- Apply / Restore、首次修改前的私有状态记录、独立 nft 表、超时激活集合、独立 watchdog、限定范围的 conntrack 清理及卸载前恢复。
-- 静态 Go 程序、LuCI 页面、rpcd/ACL、procd 服务、`.ipk` 构建器、单元／协议／故障／打包／网络命名空间测试及 CI。
+## Capabilities
 
-“全局规则”仅覆盖**已启用并选择的设备**，不会为追求全局阻断而偷偷接管其他设备。
+- Per-device dual-stack, IPv6 preference, IPv4 preference, custom timing, and DNS blocking, using discovered MAC and IPv4/IPv6 addresses.
+- Device-specific or enrolled-device-wide rules for exact domains and subdomains, with A/AAAA/HTTPS/SVCB selectors. Actions include forwarding, static rewrite, NXDOMAIN, NODATA, REFUSED, sinkhole and address-family filtering.
+- Optional IPv4/IPv6 upload/download rates, session totals and IPv6 share from **NetPreference's own nft counters**. No nlbwmon dependency. Totals reset when monitoring/service counters reset; offload may cause undercounting.
+- Apply/Restore, a private baseline record, an owned nftables table, expiring activation sets, a separate watchdog, scoped conntrack cleanup, and restore-before-uninstall behavior.
 
-## 保留现有 DNS 链
+“Global” rules affect only enabled, enrolled devices. DNS preference cannot force an IPv4-only application to use IPv6; this is not NAT64 or a bandwidth limiter.
 
-```text
-未选择设备 ───────────────────────────────→ dnsmasq :53
-已选择设备 → NetPreference :1053 ─────────→ dnsmasq :53
-                                               ↓
-                                       HomeProxy/sing-box :5333
-                                               ↓
-                                          SmartDNS :6053
-                                               ↓
-                                              上游
-```
+## DNS path and boundaries
 
-只拦截可信 LAN 接口上已识别 MAC＋源 IP 的 UDP/TCP 53；不拦截路由器本机输出，不修改已有 HomeProxy、SmartDNS、dnsmasq、NAT66 或 nlbwmon 配置。新 IPv6 隐私地址尚未识别时先走原有 DNS，避免因身份缓存未刷新导致断网。其他软件更早执行的 DNS/TPROXY 规则、受限访客区 INPUT 策略，需要现场检查。
+| Device | DNS path |
+| --- | --- |
+| Not enrolled | Existing resolver path, normally `dnsmasq :53` |
+| Enrolled and identified | `NetPreference :1053` → original resolver, default `127.0.0.1:53` |
+| Existing upstream example | `dnsmasq` → HomeProxy/sing-box → SmartDNS → upstream resolver |
 
-## 安装与启用
+Interception covers UDP/TCP port 53 on trusted LAN interfaces after matching MAC and source IP. It does not intercept router-originated DNS or rewrite existing HomeProxy, SmartDNS, dnsmasq, NAT66 or nlbwmon configuration. Newly discovered IPv6 privacy addresses retain the original path until identified. DoH, DoT, DNS inside VPNs and non-port-53 traffic are outside the interception scope. Earlier DNS/TPROXY rules and restricted guest-network INPUT rules can affect compatibility.
 
-从本仓库 Actions 的 `netpreference-mvp-<run id>` 构建产物或交付附件取得 `.ipk` 和 `SHA256SUMS`。构建产物同时包含实际编译器版本及测试日志；下载到包并不代表所有现场验收项目已经通过。
+## Install and enable
+
+Download `luci-app-netpreference_0.1.0-r6_x86_64.ipk` and `SHA256SUMS` from [v0.1.0](https://github.com/LE-saber/NetPreference/releases/tag/v0.1.0). On a matching router, place both in `/tmp`:
 
 ```sh
-# 在路由器上，使用与当前固件匹配的软件源。
 cd /tmp
 sha256sum -c SHA256SUMS
 opkg update
-opkg install ./luci-app-netpreference_0.1.0-1_x86_64.ipk
+opkg install ./luci-app-netpreference_0.1.0-r6_x86_64.ipk
 ```
 
-依赖 `luci-base`、`rpcd`、`uci`、`firewall4`、`nftables-json`、`ip-full`、`conntrack`。不捆绑安装或删除 nlbwmon；已有 nlbwmon 可直接复用。不要在实机使用 `--force-depends` 或强行安装不匹配内核的软件包。
+Dependencies: `luci-base`, `rpcd`, `uci`, `firewall4`, `nftables-json`, `ip-full`, `conntrack`. Use feeds matching the router firmware; do not force missing dependencies or mismatched kernel packages. NetPreference does not install or remove nlbwmon.
 
-安装后进入 **LuCI → Services / 服务 → NetPreference**。安装默认空闲，不自动选择设备。保持默认上游 `127.0.0.1:53`，确认 LAN 接口（默认 `br-lan`），先添加一台非关键测试设备并点击 **Save & Apply**。界面提供恢复按钮。MVP 页面使用英文标签。
+Open **LuCI → Services / 服务 → NetPreference**. Installation is idle with no enrolled devices. Keep upstream `127.0.0.1:53`, verify the LAN interface (default `br-lan`), add one noncritical test device, then save and apply. Use the Restore button to remove the plugin's interception.
 
-## A/B 的实际定义
+## How timing works
 
-A：从非首选类型查询到达起，等待首选地址证据的最长时间。
+**A** is the maximum wait for evidence of the preferred address type, measured from the arrival of the nonpreferred query. **B** is an additional delay applied only when positive preferred-address evidence exists. The total hold is bounded; an absent AAAA record does not permanently suppress valid A answers.
 
-B：只有确认存在首选地址时，才额外延迟非首选地址响应。总等待有上限；没有 AAAA 时保留并尽快返回有效 A，不无限等待、不默认删除 A。
-
-| 预设 | A | B |
-|---|---:|---:|
+| Preset | A | B |
+| --- | ---: | ---: |
 | Gentle | 75 ms | 40 ms |
 | Balanced | 120 ms | 80 ms |
 | Strong | 250 ms | 150 ms |
 
-允许自定义 `A≤750 ms`、`B≤500 ms`、`A+B≤1000 ms`。IPv4 优先对称处理。主动探测查询首选记录类型，但**不代表探测 IPv6 网络可达性，也不能迫使只使用 IPv4 的应用改用 IPv6**。Happy Eyeballs、应用缓存、DoH/DoT、VPN DNS 和 HTTPS/SVCB 提示均可能影响结果。
+Custom limits: `A ≤ 750 ms`, `B ≤ 500 ms`, `A+B ≤ 1000 ms`. IPv4 preference is symmetric. Active probes query the preferred DNS record; they do not test actual IPv6 reachability. Happy Eyeballs, application caches, encrypted DNS and HTTPS/SVCB hints can influence the outcome.
 
-## 恢复与卸载
+## Restore and remove
 
 ```sh
-# 正常或守护进程失效时均提供恢复入口。
 netpreference restore
-
-# 正常停止：撤销拦截，但保留下一次启动时的启用意愿。
 /etc/init.d/netpreference stop
-
-# prerm 会先恢复；恢复失败时拒绝继续移除恢复程序。
 opkg remove luci-app-netpreference
 ```
 
-恢复仅撤销本插件有所有权标记的规则与指定 DNS 重定向连接，不回写旧版整份配置。`/etc/netpreference/baseline.json` 保留为审计记录，权限为 root 私有；它可能包含原配置中的敏感内容，**不要上传至公开仓库**。正常日志和构建附件不包含现场快照。
+`restore` also provides an offline recovery path when the daemon is unavailable. Normal service stop removes interception while preserving the configured intent for the next start. The removal hook restores owned state first and refuses removal if recovery fails.
 
-恢复不是“任何故障下绝不丢一个 DNS 请求”的保证。watchdog、nft、conntrack、内核和原上游仍需可用；若守护进程和 watchdog 同时被杀，集合超时只保证新连接不再被拦截，旧 conntrack 会话仍可能等待到期。详见 [架构与安全边界](docs/ARCHITECTURE.md)。
+Restore removes owned rules and scoped redirected DNS connections, rather than replacing whole older configurations. `/etc/netpreference/baseline.json` remains as a root-private audit record and can contain sensitive original configuration; do not upload it publicly. Recovery still depends on the kernel, nftables, conntrack, watchdog and original resolver. Simultaneous daemon/watchdog termination can leave existing conntrack sessions waiting for expiry; see [architecture and boundaries](docs/ARCHITECTURE.md).
 
-## 开发、验证与交付边界
+## Development and evidence
+
+Go 1.23+, Python 3 and Node.js are used by the development checks. The Go module has no third-party dependencies.
 
 ```sh
-# Go >= 1.23、Python 3、Node.js；无第三方 Go 模块下载依赖。
 bash scripts/check.sh
-
-# 仅在可丢弃、有 root / nft / conntrack 的 Linux 测试环境中执行。
-sudo python3 tests/netns.py
-
-# 可选：官方 ImmortalWrt rootfs 中检查 opkg 安装/移除，不启动生产路由器。
-sudo bash tests/rootfs_install.sh
+python3 scripts/build_ipk.py
 ```
 
-直接打包：`python3 scripts/build_ipk.py`。产物位于 `dist/`，采用 OpenWrt 24.10 的 tar/gzip `.ipk` 布局及静态 linux/amd64 程序。`openwrt/luci-app-netpreference/Makefile` 提供 SDK/feed 集成入口；SDK 构建是否已验证以测试记录为准。
+Outputs are written to `dist/`. The [SDK package Makefile](openwrt/luci-app-netpreference/Makefile) provides feed integration. Kernel/network-namespace checks (`sudo python3 tests/netns.py`) and rootfs packaging checks (`sudo bash tests/rootfs_install.sh`) belong in disposable Linux test environments with the required capabilities.
 
-开发分支：`feat/mvp`。执行计划见 [EXECUTION.md](docs/EXECUTION.md)，测试证据与未验证项见 [VERIFICATION.md](docs/VERIFICATION.md)，中断失败及恢复记录在 [docs/failures](docs/failures/)。
+[Execution record](docs/EXECUTION.md) · [Verification ledger](docs/VERIFICATION.md) · [Failure records](docs/failures/)
 
-许可证：MIT；编译进程序的 Go 标准库另附其 BSD 许可证。
+These records describe earlier development stages; some refer to the earlier nlbwmon-based design. Current traffic behavior is defined by [traffic.go](internal/netpref/traffic.go) and the [LuCI view](files/www/luci-static/resources/view/netpreference/overview.js). This documentation change does not rerun router or runtime tests.
+
+MIT License: [LICENSE](LICENSE). The compiled Go standard library has its own [BSD license](docs/LICENSE-Go).
